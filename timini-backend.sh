@@ -29,32 +29,46 @@ DARK=$(printf '%s' "$OPTIONS" | sed -n 's/.*Darkness=\([1-5]\).*/\1/p')
 
 echo "INFO: sending job to the print agent" >&2
 
-# --fail-with-body gives a non-zero exit on 5xx while still surfacing the
-# agent's diagnostics, which CUPS records in the job's error log.
-if [ -n "$INPUT" ]; then
-    BODY=$(curl -sS --fail-with-body --max-time "$TIMEOUT" \
-        -H "Content-Type: application/pdf" \
-        -H "X-Timini-Darkness: $DARK" \
-        --data-binary "@$INPUT" "$AGENT_URL" 2>&1)
-    STATUS=$?
-else
-    BODY=$(curl -sS --fail-with-body --max-time "$TIMEOUT" \
-        -H "Content-Type: application/pdf" \
-        -H "X-Timini-Darkness: $DARK" \
-        --data-binary @- "$AGENT_URL" 2>&1)
-    STATUS=$?
+# CUPS backend exit codes
+OK=0; FAILED=1; RETRY=6
+
+[ -n "$INPUT" ] && SRC="@$INPUT" || SRC="@-"
+
+RESP=$(curl -sS --max-time "$TIMEOUT" -w '\n%{http_code}' \
+    -H "Content-Type: application/pdf" \
+    -H "X-Timini-Darkness: $DARK" \
+    --data-binary "$SRC" "$AGENT_URL" 2>&1)
+CURL_STATUS=$?
+CODE=$(printf '%s' "$RESP" | tail -1)
+BODY=$(printf '%s' "$RESP" | sed '$d')
+
+# Agent not running. Retry rather than fail: failing makes CUPS disable the
+# whole queue, and the fix (start the agent) is one the user can still do.
+if [ "$CURL_STATUS" -eq 7 ]; then
+    echo "ERROR: cannot reach the print agent at $AGENT_URL - start it with start-agent.sh" >&2
+    exit $RETRY
 fi
 
-if [ "$STATUS" -eq 0 ]; then
-    echo "INFO: printed" >&2
-    exit 0
+if [ "$CURL_STATUS" -ne 0 ]; then
+    echo "ERROR: transport error talking to the print agent (curl exit $CURL_STATUS)" >&2
+    printf '%s\n' "$BODY" | tail -c 400 >&2
+    exit $RETRY
 fi
 
-if [ "$STATUS" -eq 7 ]; then
-    echo "ERROR: cannot reach the print agent at $AGENT_URL." >&2
-    echo "ERROR: start it with start-agent.sh, then retry." >&2
-else
-    echo "ERROR: print failed (curl exit $STATUS):" >&2
-    printf '%s\n' "$BODY" | tail -c 800 >&2
-fi
-exit 1
+case "$CODE" in
+    200)
+        echo "INFO: printed" >&2
+        exit $OK
+        ;;
+    503)
+        # Printer asleep or out of range. Keep the queue enabled and let CUPS
+        # come back to it - these printers auto-power-off constantly.
+        echo "INFO: printer unreachable, will retry" >&2
+        exit $RETRY
+        ;;
+    *)
+        echo "ERROR: print failed (HTTP $CODE):" >&2
+        printf '%s\n' "$BODY" | tail -c 800 >&2
+        exit $FAILED
+        ;;
+esac

@@ -39,6 +39,65 @@ PAPER = os.environ.get("TIMINI_PAPER", "a4sheet_1600r_1632p_32pl_2460mh")
 
 MAX_BODY = 64 * 1024 * 1024
 
+# These printers sleep and auto-power-off, so a job is very often submitted
+# while the printer is unreachable. Rather than failing (which makes CUPS
+# disable the whole queue), wait for it to appear.
+WAIT_SECONDS = int(os.environ.get("TIMINI_WAIT", "180"))
+RETRY_DELAY = 10
+
+# Substrings that mean "printer isn't there yet", as opposed to a real error.
+UNAVAILABLE_MARKERS = (
+    "was not found",
+    "no supported printer",
+    "no printers found",
+    "connection failed",
+    "device not found",
+)
+
+
+def looks_unavailable(output):
+    low = output.lower()
+    return any(marker in low for marker in UNAVAILABLE_MARKERS)
+
+
+# Bluetooth names of MV-B530 and its documented clones.
+SUPPORTED_PREFIXES = ("MV-B530", "GL-VS9", "QDID", "X9")
+SCAN_SECONDS = float(os.environ.get("TIMINI_SCAN_SECONDS", "20"))
+
+_resolved_name = None
+
+
+def scan_devices():
+    """Classic Bluetooth inquiry. Returns a list of DeviceInfo."""
+    from timiniprint.transport.bluetooth.adapters import _get_classic_adapter
+
+    adapter = _get_classic_adapter()
+    if adapter is None:
+        return []
+    return list(adapter.scan_blocking(SCAN_SECONDS))
+
+
+def resolve_printer_name(force=False):
+    """Find the printer's Bluetooth name.
+
+    Passing an explicit name to timiniprint matters: it then builds a
+    classic+BLE connect plan and can fall back between them. Letting it
+    auto-pick resolves to a BLE-only address that goes stale when the
+    printer sleeps, and every later connect fails with "was not found".
+    """
+    global _resolved_name
+    if PRINTER:
+        return PRINTER
+    if _resolved_name and not force:
+        return _resolved_name
+    for dev in scan_devices():
+        name = (getattr(dev, "name", "") or "").upper()
+        if any(name.startswith(p) for p in SUPPORTED_PREFIXES):
+            _resolved_name = getattr(dev, "name")
+            log(f"resolved printer: {_resolved_name}")
+            return _resolved_name
+    return ""
+
 for _sp in glob.glob(os.path.join(REPO, ".venv", "lib", "python*", "site-packages")):
     sys.path.insert(0, _sp)
 sys.path.insert(0, REPO)
@@ -52,11 +111,13 @@ def log(msg):
         fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
 
 
-def run_timiniprint(path, darkness):
+def run_timiniprint(path, darkness, force_rescan=False):
     """Print one file. Returns (ok, combined output)."""
-    argv = ["timiniprint"]
-    if PRINTER:
-        argv += ["--bluetooth", PRINTER]
+    name = resolve_printer_name(force=force_rescan)
+    if not name:
+        return False, "no supported printer found in a Bluetooth scan\n"
+
+    argv = ["timiniprint", "--bluetooth", name]
     argv += ["--printer-model", MODEL, "--paper", PAPER, "--verbose"]
     if darkness:
         argv += ["--darkness", str(darkness)]
@@ -93,6 +154,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             self._reply(200, "ok\n")
+        elif self.path == "/scan":
+            # Diagnostics: only one process can hold the Bluetooth grant, so
+            # the agent has to be the one that scans.
+            try:
+                devices = scan_devices()
+            except Exception:
+                self._reply(500, traceback.format_exc())
+                return
+            lines = [f"{getattr(d, 'name', '?')}  {getattr(d, 'address', '?')}"
+                     for d in devices]
+            self._reply(200, "\n".join(lines) + "\n" if lines else "no devices\n")
         else:
             self._reply(404, "not found\n")
 
@@ -125,14 +197,33 @@ class Handler(BaseHTTPRequestHandler):
 
         log(f"job received: {len(data)} bytes darkness={darkness or 'default'}")
         with _print_lock:
-            ok, out = run_timiniprint(path, darkness)
+            deadline = time.monotonic() + WAIT_SECONDS
+            attempt = 0
+            while True:
+                attempt += 1
+                # Re-scan on retries: a cached name/address goes stale once
+                # the printer has slept.
+                ok, out = run_timiniprint(path, darkness, force_rescan=attempt > 1)
+                if ok or not looks_unavailable(out):
+                    break
+                if time.monotonic() >= deadline:
+                    log(f"printer still unreachable after {attempt} attempts; asking CUPS to retry")
+                    self._reply(503, "printer unreachable\n" + out[-2000:])
+                    self._cleanup(path)
+                    return
+                log(f"printer unreachable (attempt {attempt}), waiting {RETRY_DELAY}s")
+                time.sleep(RETRY_DELAY)
+
+        self._cleanup(path)
+        log(f"job {'OK' if ok else 'FAILED'} after {attempt} attempt(s)\n{out.strip()[-2000:]}")
+        self._reply(200 if ok else 500, out[-4000:] or ("ok\n" if ok else "failed\n"))
+
+    @staticmethod
+    def _cleanup(path):
         try:
             os.remove(path)
         except OSError:
             pass
-
-        log(f"job {'OK' if ok else 'FAILED'}\n{out.strip()[-2000:]}")
-        self._reply(200 if ok else 500, out[-4000:] or ("ok\n" if ok else "failed\n"))
 
 
 def main():

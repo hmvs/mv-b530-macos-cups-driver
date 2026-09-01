@@ -38,7 +38,11 @@ launchctl kickstart -k system/org.cups.cupsd 2>/dev/null || killall -HUP cupsd 2
 sleep 2
 
 echo "==> creating queue: $QUEUE"
-lpadmin -p "$QUEUE" -E -v "timini:/mv_b530" -P "$BASE/timini.ppd" -o printer-is-shared=false
+# retry-job keeps the queue enabled when the printer is simply asleep, which
+# for a battery thermal printer is most of the time.
+lpadmin -p "$QUEUE" -E -v "timini:/mv_b530" -P "$BASE/timini.ppd" \
+    -o printer-is-shared=false \
+    -o printer-error-policy=retry-job
 lpoptions -d "$QUEUE" >/dev/null 2>&1 || true
 cupsenable "$QUEUE" 2>/dev/null || true
 cupsaccept "$QUEUE" 2>/dev/null || true
