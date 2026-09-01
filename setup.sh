@@ -80,7 +80,6 @@ codesign --force -s - "$APP"
 
 echo "==> installing driver files"
 cp "$SRC/agent.py" "$SRC/timini.ppd" "$SRC/timini-backend.sh" "$BASE/"
-sed -i '' "s|python3\.14|python$PYVER|g" "$BASE/agent.py"
 
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
     -f "$APP" 2>/dev/null || true

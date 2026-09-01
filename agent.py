@@ -5,6 +5,7 @@ backend (running as _lp under cupsd) can never obtain. The backend drops a job
 in the spool directory; this agent prints it and writes back a result file.
 """
 
+import glob
 import io
 import json
 import os
@@ -19,11 +20,15 @@ SPOOL = os.environ.get("TIMINI_SPOOL", "/usr/local/var/spool/timini")
 REPO = os.path.join(BASE, "TiMini-Print")
 LOG = os.path.join(BASE, "agent.log")
 
-PRINTER = "MV-B530-38AC"
-MODEL = "mv_b530"
-PAPER = "a4sheet_1600r_1632p_32pl_2460mh"
+# Empty PRINTER means "first supported printer in range", which is what you
+# want unless several TiMini-compatible printers are nearby. Pin one with
+# e.g. TIMINI_PRINTER=MV-B530-38AC.
+PRINTER = os.environ.get("TIMINI_PRINTER", "")
+MODEL = os.environ.get("TIMINI_MODEL", "mv_b530")
+PAPER = os.environ.get("TIMINI_PAPER", "a4sheet_1600r_1632p_32pl_2460mh")
 
-sys.path.insert(0, os.path.join(REPO, ".venv", "lib", "python3.14", "site-packages"))
+for _sp in glob.glob(os.path.join(REPO, ".venv", "lib", "python*", "site-packages")):
+    sys.path.insert(0, _sp)
 sys.path.insert(0, REPO)
 
 
@@ -35,9 +40,10 @@ def log(msg):
 
 def print_file(path, opts):
     """Run timiniprint against one file. Returns (ok, output)."""
-    argv = [
-        "timiniprint",
-        "--bluetooth", PRINTER,
+    argv = ["timiniprint"]
+    if PRINTER:
+        argv += ["--bluetooth", PRINTER]
+    argv += [
         "--printer-model", MODEL,
         "--paper", opts.get("paper", PAPER),
         "--verbose",
