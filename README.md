@@ -60,17 +60,24 @@ permission prompt. So the driver is split in two.
 
 ```
 ⌘P → CUPS queue → timini backend (as _lp, no Bluetooth)
-                    ↓  spool: /usr/local/var/spool/timini
+                    ↓  HTTP POST to 127.0.0.1:9101
      print agent inside TiMiniRunner.app (user session, has Bluetooth)
                     ↓  timiniprint → BLE GATT → printer
 ```
 
+The handoff is loopback HTTP rather than a shared directory because **macOS
+sandboxes CUPS backends away from arbitrary filesystem paths**. A spool under
+`/usr/local/var/spool/timini`, mode `0770` and group `_lp`, is not even
+`stat`-able from the backend — it reports the directory as missing despite
+correct ownership and no sandbox denial appearing in the log. Networking is
+permitted, since the stock `ipp`, `socket` and `lpd` backends depend on it.
+
 | File | Role |
 |---|---|
-| `timini-backend.sh` | CUPS backend. Spools the PDF, waits for a result, reports success/failure to CUPS. |
-| `agent.py` | Watches the spool, prints via `timiniprint`, writes back `.done` / `.err`. |
+| `timini-backend.sh` | CUPS backend. POSTs the PDF to the agent, maps the reply to a CUPS exit status. |
+| `agent.py` | Loopback HTTP server; prints via `timiniprint`, serialised on the Bluetooth link. |
 | `timini.ppd` | A4 at 200 dpi, greyscale, PDF passthrough, darkness 1–5. |
-| `install-driver.sh` | Installs spool dir, backend, and the queue (needs `sudo`). |
+| `install-driver.sh` | Installs the backend and the queue (needs `sudo`). |
 
 ## Findings worth knowing
 
@@ -121,8 +128,7 @@ under `~/Library/Application Support/TiMiniPrint/`.
 sudo ./install-driver.sh
 ```
 
-Creates `/usr/local/var/spool/timini` (owned by you, group `_lp`, mode 770),
-installs the backend, and adds a queue named `Anko_Inkless_A4`.
+Installs the `timini` backend and adds a queue named `Anko_Inkless_A4`.
 
 ### 3. Grant Bluetooth once
 

@@ -1,10 +1,13 @@
 #!/bin/sh
-# CUPS backend for the Anko Inkless A4 (MV-B530).
+# CUPS backend for the Kmart/Anko Inkless A4 (MV-B530).
 #
-# Runs as _lp under cupsd, which can never hold a Bluetooth TCC grant, so this
-# only spools the job. TiMiniRunner.app in the user session does the printing.
+# Runs as _lp under cupsd. That context can never hold a Bluetooth TCC grant,
+# and macOS additionally sandboxes backends away from arbitrary filesystem
+# paths - a shared spool directory under /usr/local is not even stat-able.
+# So the job is handed to the user-session agent over loopback HTTP, which
+# the sandbox does permit (ipp/socket/lpd backends need networking).
 
-SPOOL=/usr/local/var/spool/timini
+AGENT_URL="${TIMINI_AGENT_URL:-http://127.0.0.1:9101/print}"
 TIMEOUT=300
 
 # No arguments: device discovery.
@@ -18,57 +21,40 @@ if [ $# -lt 5 ] || [ $# -gt 6 ]; then
     exit 1
 fi
 
-JOB_ID="$1"
 OPTIONS="$5"
 INPUT="$6"
 
-if [ ! -d "$SPOOL" ]; then
-    echo "ERROR: spool directory $SPOOL is missing" >&2
-    exit 1
-fi
-
-ID="${JOB_ID}-$$-$(date +%s)"
-DATA="$SPOOL/$ID.pdf"
-
-if [ -n "$INPUT" ]; then
-    cp "$INPUT" "$DATA" || { echo "ERROR: cannot stage $INPUT" >&2; exit 1; }
-else
-    cat > "$DATA" || { echo "ERROR: cannot stage job from stdin" >&2; exit 1; }
-fi
-
-if [ ! -s "$DATA" ]; then
-    echo "ERROR: empty print job" >&2
-    rm -f "$DATA"
-    exit 1
-fi
-
-# Carry a darkness option through if the user set one.
 DARK=$(printf '%s' "$OPTIONS" | sed -n 's/.*Darkness=\([1-5]\).*/\1/p')
-printf '{"darkness": "%s"}\n' "${DARK:-3}" > "$SPOOL/$ID.opts"
+[ -n "$DARK" ] || DARK=3
 
-chmod 664 "$DATA" "$SPOOL/$ID.opts" 2>/dev/null
-: > "$SPOOL/$ID.ready"
-chmod 664 "$SPOOL/$ID.ready" 2>/dev/null
+echo "INFO: sending job to the print agent" >&2
 
-echo "INFO: job queued, waiting for the print agent" >&2
+# --fail-with-body gives a non-zero exit on 5xx while still surfacing the
+# agent's diagnostics, which CUPS records in the job's error log.
+if [ -n "$INPUT" ]; then
+    BODY=$(curl -sS --fail-with-body --max-time "$TIMEOUT" \
+        -H "Content-Type: application/pdf" \
+        -H "X-Timini-Darkness: $DARK" \
+        --data-binary "@$INPUT" "$AGENT_URL" 2>&1)
+    STATUS=$?
+else
+    BODY=$(curl -sS --fail-with-body --max-time "$TIMEOUT" \
+        -H "Content-Type: application/pdf" \
+        -H "X-Timini-Darkness: $DARK" \
+        --data-binary @- "$AGENT_URL" 2>&1)
+    STATUS=$?
+fi
 
-i=0
-while [ $i -lt $((TIMEOUT * 2)) ]; do
-    if [ -f "$SPOOL/$ID.done" ]; then
-        rm -f "$SPOOL/$ID.done"
-        echo "INFO: printed" >&2
-        exit 0
-    fi
-    if [ -f "$SPOOL/$ID.err" ]; then
-        echo "ERROR: print agent reported a failure:" >&2
-        tail -c 800 "$SPOOL/$ID.err" >&2
-        rm -f "$SPOOL/$ID.err"
-        exit 1
-    fi
-    sleep 0.5
-    i=$((i + 1))
-done
+if [ "$STATUS" -eq 0 ]; then
+    echo "INFO: printed" >&2
+    exit 0
+fi
 
-echo "ERROR: timed out after ${TIMEOUT}s. Is the printer on and the TiMini print agent running?" >&2
-rm -f "$DATA" "$SPOOL/$ID.opts" "$SPOOL/$ID.ready"
+if [ "$STATUS" -eq 7 ]; then
+    echo "ERROR: cannot reach the print agent at $AGENT_URL." >&2
+    echo "ERROR: start it with start-agent.sh, then retry." >&2
+else
+    echo "ERROR: print failed (curl exit $STATUS):" >&2
+    printf '%s\n' "$BODY" | tail -c 800 >&2
+fi
 exit 1

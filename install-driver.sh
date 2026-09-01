@@ -2,10 +2,13 @@
 # Installs the CUPS side of the Anko Inkless A4 (MV-B530) driver.
 # Run with sudo:  sudo ./install-driver.sh
 #
-# Installs three things:
-#   1. a spool directory writable by cupsd's _lp user and by you
-#   2. the "timini" CUPS backend
-#   3. a print queue named Anko_Inkless_A4
+# Installs two things:
+#   1. the "timini" CUPS backend
+#   2. a print queue named Anko_Inkless_A4
+#
+# No shared spool directory: macOS sandboxes CUPS backends away from arbitrary
+# filesystem paths, so the backend talks to the user-session agent over
+# loopback HTTP instead.
 #
 # It does NOT install any auto-start item. The print agent is started
 # separately (see README).
@@ -14,7 +17,6 @@ set -eu
 
 OWNER="${SUDO_USER:-$(stat -f '%Su' /dev/console)}"
 BASE="/Users/$OWNER/Library/Application Support/TiMiniPrint"
-SPOOL="/usr/local/var/spool/timini"
 BACKEND="/usr/libexec/cups/backend/timini"
 QUEUE="Anko_Inkless_A4"
 
@@ -25,10 +27,8 @@ fi
 
 echo "==> installing for user: $OWNER"
 
-echo "==> spool directory: $SPOOL"
-mkdir -p "$SPOOL"
-chown "$OWNER":_lp "$SPOOL"
-chmod 770 "$SPOOL"
+# Left over from the spool-based design; harmless if absent.
+rmdir /usr/local/var/spool/timini 2>/dev/null || true
 
 echo "==> backend: $BACKEND"
 install -o root -g wheel -m 0755 "$BASE/timini-backend.sh" "$BACKEND"
