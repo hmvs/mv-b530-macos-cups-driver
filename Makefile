@@ -40,6 +40,9 @@ install:
 	install -o root -g wheel -m 0755 $(RELEASE)/mvb530-backend $(BACKEND_DIR)/mvb530
 	install -d -o root -g wheel -m 0755 $(PREFIX)/libexec
 	install -o root -g wheel -m 0755 $(RELEASE)/mvb530d $(PREFIX)/libexec/mvb530d
+	@# The PPD directory is not guaranteed to exist: removing another
+	@# vendor's driver can take Contents/ with it.
+	install -d -o root -g admin -m 0755 $(PPD_DIR)
 	install -o root -g admin -m 0644 mvb530.ppd $(PPD_DIR)/mvb530.ppd
 	@echo "==> restarting cupsd so it sees the new filter and backend"
 	-launchctl kickstart -k system/org.cups.cupsd 2>/dev/null || killall -HUP cupsd 2>/dev/null || true
