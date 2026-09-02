@@ -4,9 +4,7 @@
 /// Command Line Tools alone — XCTest needs xcode-select pointed at a full
 /// Xcode, which is a lot to ask of someone who just wants their printer to
 /// work.
-import CCups
 import Foundation
-import MVBFilter
 import MVBImage
 import MVBProtocol
 
@@ -344,66 +342,9 @@ func testBilevel() {
           "mismatched dimensions must be rejected")
 }
 
-// MARK: - Filter integration
-
-struct Pattern {
-    var width: Int
-    var height: Int
-    var bitsPerPixel: Int
-    var colorSpace: cups_cspace_t
-    var sample: (Int, Int) -> UInt8
-}
-
-func writeRaster(_ pattern: Pattern, pages: Int) -> String? {
-    let path = NSTemporaryDirectory() + "mvb_raster_\(UUID().uuidString)"
-    guard FileManager.default.createFile(atPath: path, contents: nil) else {
-        return nil
-    }
-    let fd = open(path, O_WRONLY)
-    guard fd >= 0, let raster = cupsRasterOpen(fd, CUPS_RASTER_WRITE) else {
-        return nil
-    }
-
-    var header = cups_page_header2_t()
-    header.cupsWidth = UInt32(pattern.width)
-    header.cupsHeight = UInt32(pattern.height)
-    header.cupsBitsPerColor = pattern.bitsPerPixel == 1 ? 1 : 8
-    header.cupsBitsPerPixel = UInt32(pattern.bitsPerPixel)
-    header.cupsBytesPerLine = UInt32((pattern.width * pattern.bitsPerPixel + 7) / 8)
-    header.cupsColorSpace = pattern.colorSpace
-    header.cupsNumColors = pattern.bitsPerPixel == 24 ? 3 : 1
-    header.HWResolution = (200, 200)
-
-    let lineBytes = Int(header.cupsBytesPerLine)
-    for _ in 0..<pages {
-        cupsRasterWriteHeader2(raster, &header)
-        for y in 0..<pattern.height {
-            var row = [UInt8](repeating: 0, count: lineBytes)
-            for x in 0..<pattern.width {
-                let value = pattern.sample(x, y)
-                switch pattern.bitsPerPixel {
-                case 8:
-                    row[x] = value
-                case 1:
-                    if value == 0 { row[x / 8] |= 1 << UInt8(7 - x % 8) }
-                case 24:
-                    row[x * 3] = value
-                    row[x * 3 + 1] = value
-                    row[x * 3 + 2] = value
-                default:
-                    break
-                }
-            }
-            _ = row.withUnsafeMutableBufferPointer { buffer in
-                cupsRasterWritePixels(raster, buffer.baseAddress, UInt32(lineBytes))
-            }
-        }
-    }
-
-    cupsRasterClose(raster)
-    close(fd)
-    return path
-}
+/// x9 profile render width, mirrored here so the tests do not depend on the
+/// printer app target.
+let renderWidthUnderTest = 1600
 
 struct StreamStats {
     var valid = true
@@ -442,205 +383,104 @@ func decode(_ data: [UInt8]) -> StreamStats {
     return stats
 }
 
-func runFilter(path: String, options: FilterOptions) -> ([UInt8], Int)? {
-    let fd = open(path, O_RDONLY)
-    guard fd >= 0 else { return nil }
-    defer { close(fd) }
+// MARK: - Row conversion
 
-    var collected = [UInt8]()
-    do {
-        let pages = try Filter.process(inputFD: fd, options: options) { bytes in
-            collected.append(contentsOf: bytes)
-        }
-        return (collected, pages)
-    } catch {
-        return nil
-    }
+func testLumaRow() {
+    group("lumaRow")
+
+    // 8-bit: W has 0 as black, K has 255 as black. Getting this backwards
+    // prints a solid black page and wastes the sheet.
+    let grey: [UInt8] = [0, 64, 128, 255]
+    check(Bilevel.lumaRow(grey[...], width: 4, bitsPerPixel: 8,
+                          polarity: .whiteIsHigh) == [0, 64, 128, 255],
+          "8-bit W must pass through")
+    check(Bilevel.lumaRow(grey[...], width: 4, bitsPerPixel: 8,
+                          polarity: .blackIsHigh) == [255, 191, 127, 0],
+          "8-bit K must invert")
+
+    // 1-bit: in K a set bit is ink, in W a set bit is white.
+    let bits: [UInt8] = [0b10000000]
+    check(Bilevel.lumaRow(bits[...], width: 2, bitsPerPixel: 1,
+                          polarity: .blackIsHigh) == [0, 255],
+          "1-bit K: set bit is ink")
+    check(Bilevel.lumaRow(bits[...], width: 2, bitsPerPixel: 1,
+                          polarity: .whiteIsHigh) == [255, 0],
+          "1-bit W: set bit is white")
+
+    // 24-bit uses Rec. 601 luma.
+    let rgb: [UInt8] = [255, 255, 255, 0, 0, 0]
+    let luma24 = Bilevel.lumaRow(rgb[...], width: 2, bitsPerPixel: 24,
+                                 polarity: .whiteIsHigh)
+    check(luma24[0] > 240 && luma24[1] == 0, "24-bit luma = \(luma24)")
+
+    // A row shorter than the geometry claims must come back white rather than
+    // reading past the end - that was a real heap overread in an earlier draft.
+    let truncated: [UInt8] = [10, 20]
+    check(Bilevel.lumaRow(truncated[...], width: 1000, bitsPerPixel: 8,
+                          polarity: .whiteIsHigh).allSatisfy { $0 == 255 },
+          "a short row must not be read past its end")
+    check(Bilevel.lumaRow(truncated[...], width: 1000, bitsPerPixel: 1,
+                          polarity: .blackIsHigh).allSatisfy { $0 == 255 },
+          "a short 1-bit row must not be read past its end")
+    check(Bilevel.lumaRow(truncated[...], width: 1000, bitsPerPixel: 24,
+                          polarity: .whiteIsHigh).allSatisfy { $0 == 255 },
+          "a short 24-bit row must not be read past its end")
+
+    // Unknown depths are white, not black.
+    check(Bilevel.lumaRow(grey[...], width: 4, bitsPerPixel: 16,
+                          polarity: .whiteIsHigh) == [255, 255, 255, 255],
+          "an unsupported depth must come back white")
+
+    check(Bilevel.lumaRow(grey[...], width: 0, bitsPerPixel: 8,
+                          polarity: .whiteIsHigh).isEmpty,
+          "zero width yields nothing")
+
+    // Slices that do not start at zero must be honoured.
+    let padded: [UInt8] = [9, 9, 1, 2, 3, 4]
+    check(Bilevel.lumaRow(padded[2...], width: 4, bitsPerPixel: 8,
+                          polarity: .whiteIsHigh) == [1, 2, 3, 4],
+          "a non-zero-based slice must be read from its own start")
 }
 
-func testFilterGeometry() {
-    group("filter geometry")
-    let pattern = Pattern(width: 1600, height: 50, bitsPerPixel: 8,
-                          colorSpace: CUPS_CSPACE_W) { _, _ in 255 }
-    guard let path = writeRaster(pattern, pages: 1) else {
-        check(false, "could not write raster")
-        return
-    }
-    defer { try? FileManager.default.removeItem(atPath: path) }
+/// The whole page path, end to end, without CUPS or hardware: luma rows in,
+/// a framed command stream out.
+func testPagePipeline() {
+    group("page pipeline")
 
-    guard let (data, pages) = runFilter(path: path, options: FilterOptions()) else {
-        check(false, "filter failed")
+    let sourceWidth = 1654          // A4 at 200dpi across the full sheet
+    let height = 8
+    var page = [UInt8]()
+    for _ in 0..<height {
+        var row = [UInt8](repeating: 255, count: sourceWidth)
+        row[0] = 0
+        row[sourceWidth - 1] = 0
+        page += Bilevel.scaleRow(row[...], to: renderWidthUnderTest)
+    }
+
+    let bits = Bilevel.convert(luma: page, width: renderWidthUnderTest,
+                               height: height, dither: .none, threshold: 128)
+    check(bits.count == renderWidthUnderTest * height, "bilevel size")
+
+    var options = JobOptions()
+    options.paperMode = .a4Sheet
+    options.a4SheetMaxHeight = 2460
+    guard let stream = Wire.buildJob(pixels: bits, width: renderWidthUnderTest,
+                                     height: height, options: options) else {
+        check(false, "buildJob returned nil")
         return
     }
-    let stats = decode(data)
+
+    let stats = decode(stream)
     check(stats.valid, "stream framing is not decodable")
     check(stats.badCRC == 0, "\(stats.badCRC) packets with a bad CRC")
     check(stats.badTerminator == 0, "\(stats.badTerminator) missing 0xff")
-    check(pages == 1, "converted \(pages) pages, want 1")
-    check(stats.counts[0xA4] == 1, "blackening packets = \(stats.counts[0xA4])")
-    check(stats.counts[0xAF] == 1, "energy packets = \(stats.counts[0xAF])")
-    check(stats.counts[0xBE] == 1, "print mode packets = \(stats.counts[0xBE])")
-    check(stats.counts[0xA3] == 1, "device state packets = \(stats.counts[0xA3])")
-    check(stats.counts[0xBF] + stats.counts[0xA2] == 50,
-          "row packets = \(stats.counts[0xBF] + stats.counts[0xA2]), want 50")
-    check(stats.firstRowPixels == renderWidthDefault,
-          "first row covers \(stats.firstRowPixels) px, want \(renderWidthDefault)")
-}
-
-func testFilterMultiPage() {
-    group("filter multi-page")
-    let pattern = Pattern(width: 1600, height: 10, bitsPerPixel: 8,
-                          colorSpace: CUPS_CSPACE_W) { _, _ in 255 }
-    guard let path = writeRaster(pattern, pages: 3),
-          let (data, pages) = runFilter(path: path, options: FilterOptions()) else {
-        check(false, "filter failed on multi-page input")
-        return
-    }
-    defer { try? FileManager.default.removeItem(atPath: path) }
-
-    let stats = decode(data)
-    check(pages == 3, "converted \(pages) pages, want 3")
-    check(stats.counts[0xA3] == 3,
-          "one device-state per page, got \(stats.counts[0xA3])")
-    check(stats.counts[0xBF] + stats.counts[0xA2] == 30,
-          "row packets = \(stats.counts[0xBF] + stats.counts[0xA2]), want 30")
-}
-
-func testFilterColorSpace() {
-    group("filter colorspace")
-    // W: 0 is black. K: 255 is black. An all-black page in one space must not
-    // come out all-white in the other.
-    let cases: [(String, Pattern)] = [
-        ("W", Pattern(width: 64, height: 4, bitsPerPixel: 8,
-                      colorSpace: CUPS_CSPACE_W) { _, _ in 0 }),
-        ("K", Pattern(width: 64, height: 4, bitsPerPixel: 8,
-                      colorSpace: CUPS_CSPACE_K) { _, _ in 255 }),
-        ("1bpp K", Pattern(width: 64, height: 4, bitsPerPixel: 1,
-                           colorSpace: CUPS_CSPACE_K) { _, _ in 0 }),
-        ("24bpp", Pattern(width: 64, height: 4, bitsPerPixel: 24,
-                          colorSpace: CUPS_CSPACE_RGB) { _, _ in 0 }),
-    ]
-
-    var options = FilterOptions()
-    options.renderWidth = 64
-
-    for (label, pattern) in cases {
-        guard let path = writeRaster(pattern, pages: 1),
-              let (data, _) = runFilter(path: path, options: options) else {
-            check(false, "\(label): filter failed")
-            continue
-        }
-        defer { try? FileManager.default.removeItem(atPath: path) }
-        let stats = decode(data)
-        check(stats.valid, "\(label): stream invalid")
-        check(stats.counts[0xBF] == 4,
-              "\(label): row packets = \(stats.counts[0xBF]), want 4")
-        check(stats.firstRowPixels == 64,
-              "\(label): first row covers \(stats.firstRowPixels) px, want 64")
-    }
-}
-
-func testFilterScaling() {
-    group("filter scaling")
-    // A4 at 200dpi is 1654px if the imageable area is the whole sheet.
-    let pattern = Pattern(width: 1654, height: 8, bitsPerPixel: 8,
-                          colorSpace: CUPS_CSPACE_W) { x, _ in x < 4 ? 0 : 255 }
-    guard let path = writeRaster(pattern, pages: 1),
-          let (data, _) = runFilter(path: path, options: FilterOptions()) else {
-        check(false, "filter failed on 1654px input")
-        return
-    }
-    defer { try? FileManager.default.removeItem(atPath: path) }
-
-    let stats = decode(data)
-    check(stats.valid, "scaled stream invalid")
-    check(stats.firstRowPixels == renderWidthDefault,
-          "scaled row covers \(stats.firstRowPixels) px, want \(renderWidthDefault)")
-}
-
-func testFilterEmpty() {
-    group("filter empty")
-    let path = NSTemporaryDirectory() + "mvb_empty_\(UUID().uuidString)"
-    FileManager.default.createFile(atPath: path, contents: Data())
-    defer { try? FileManager.default.removeItem(atPath: path) }
-
-    guard let (data, pages) = runFilter(path: path, options: FilterOptions()) else {
-        check(false, "empty raster should not fail")
-        return
-    }
-    check(pages == 0, "empty raster produced \(pages) pages")
-    check(data.isEmpty, "empty raster produced \(data.count) bytes")
-}
-
-func testFilterRejectsBadHeader() {
-    group("filter header validation")
-    // A header claiming more pixels than the row buffer holds must be
-    // rejected, not read past the end of the buffer.
-    let path = NSTemporaryDirectory() + "mvb_bad_\(UUID().uuidString)"
-    guard FileManager.default.createFile(atPath: path, contents: nil) else {
-        check(false, "could not create file")
-        return
-    }
-    defer { try? FileManager.default.removeItem(atPath: path) }
-
-    let fd = open(path, O_WRONLY)
-    guard fd >= 0, let raster = cupsRasterOpen(fd, CUPS_RASTER_WRITE) else {
-        check(false, "could not open raster for writing")
-        return
-    }
-    var header = cups_page_header2_t()
-    header.cupsWidth = 10000            // far more than the line can hold
-    header.cupsHeight = 2
-    header.cupsBitsPerColor = 8
-    header.cupsBitsPerPixel = 8
-    header.cupsBytesPerLine = 16
-    header.cupsColorSpace = CUPS_CSPACE_W
-    header.cupsNumColors = 1
-    header.HWResolution = (200, 200)
-    cupsRasterWriteHeader2(raster, &header)
-    var row = [UInt8](repeating: 200, count: 16)
-    for _ in 0..<2 {
-        _ = row.withUnsafeMutableBufferPointer { buffer in
-            cupsRasterWritePixels(raster, buffer.baseAddress, 16)
-        }
-    }
-    cupsRasterClose(raster)
-    close(fd)
-
-    let readFD = open(path, O_RDONLY)
-    defer { close(readFD) }
-    var threw = false
-    do {
-        _ = try Filter.process(inputFD: readFD, options: FilterOptions()) { _ in }
-    } catch {
-        threw = true
-    }
-    check(threw, "an inconsistent raster header must be rejected")
-}
-
-func testFilterOptions() {
-    group("filter options")
-    var options = FilterOptions()
-    options.apply(optionString: "Darkness=5 MvbDither=None")
-    check(options.darkness == 5, "darkness = \(options.darkness), want 5")
-    check(options.dither == .none, "dither should be none")
-
-    options = FilterOptions()
-    options.apply(optionString: "Darkness=99")
-    check(options.darkness == 3, "out-of-range darkness must keep the default")
-
-    options = FilterOptions()
-    options.apply(optionString: "ExtraDarkness=1")
-    check(options.darkness == 3, "a substring key must not match")
-
-    options = FilterOptions()
-    options.apply(optionString: nil)
-    check(options.darkness == 3, "nil options must be safe")
-
-    options = FilterOptions()
-    options.apply(optionString: "MvbThreshold=200 Darkness=2")
-    check(options.threshold == 200, "threshold = \(options.threshold)")
-    check(options.darkness == 2, "darkness = \(options.darkness)")
+    check(stats.counts[0xA4] == 1, "one blackening packet")
+    check(stats.counts[0xBE] == 1, "one print-mode packet")
+    check(stats.counts[0xA3] == 1, "one device-state packet")
+    check(stats.counts[0xBF] + stats.counts[0xA2] == height,
+          "row packets = \(stats.counts[0xBF] + stats.counts[0xA2]), want \(height)")
+    check(stats.firstRowPixels == renderWidthUnderTest,
+          "first row covers \(stats.firstRowPixels) px")
 }
 
 // MARK: - Entry point
@@ -658,13 +498,8 @@ testBuildJobGuards()
 testGolden(path: fixturePath)
 testScaling()
 testBilevel()
-testFilterGeometry()
-testFilterMultiPage()
-testFilterColorSpace()
-testFilterScaling()
-testFilterEmpty()
-testFilterRejectsBadHeader()
-testFilterOptions()
+testLumaRow()
+testPagePipeline()
 
 print("\n\(checksRun) checks, \(checksFailed) failed")
 exit(checksFailed == 0 ? 0 : 1)

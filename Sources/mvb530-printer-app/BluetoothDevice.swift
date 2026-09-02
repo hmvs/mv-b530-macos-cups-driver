@@ -15,10 +15,18 @@
 import CPAPPL
 import CPAPPLSupport
 import Foundation
+import os
+
+/// papplLog needs a system pointer the device callbacks do not have, and a
+/// LaunchAgent's stderr goes nowhere, so log to the unified log:
+///
+///     log stream --predicate 'subsystem == "org.hmvs.mvb530"' --info
+///
+/// Mirrored to stderr for when the app is run by hand.
+let deviceLogger = Logger(subsystem: "org.hmvs.mvb530", category: "device")
 
 func deviceLog(_ message: String) {
-    // papplLog needs a system pointer we do not have in device callbacks, so
-    // go straight to stderr - launchd and the shell both capture it.
+    deviceLogger.info("\(message, privacy: .public)")
     FileHandle.standardError.write(Data("mvb530: \(message)\n".utf8))
 }
 

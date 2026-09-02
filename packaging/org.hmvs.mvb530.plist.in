@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    IPP Everywhere printer application for MV-B530 class thermal printers.
+
+    @PREFIX@ is substituted at install time: launchd does not expand $HOME or
+    any other variable in a plist.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>org.hmvs.mvb530</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>@PREFIX@/libexec/mvb530-printer-app</string>
+        <string>server</string>
+        <string>-o</string>
+        <string>server-port=8631</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <!-- PAPPL creates an NSStatusItem, so it needs a GUI session. -->
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <!-- A LaunchAgent's stderr is discarded otherwise. @LOGDIR@ is
+         substituted at install time: launchd expands nothing itself. -->
+    <key>StandardOutPath</key>
+    <string>@LOGDIR@/mvb530.log</string>
+    <key>StandardErrorPath</key>
+    <string>@LOGDIR@/mvb530.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

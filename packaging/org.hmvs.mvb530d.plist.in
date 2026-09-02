@@ -20,7 +20,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/libexec/mvb530d</string>
+        <string>@PREFIX@/libexec/mvb530d</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -33,6 +33,13 @@
          no Bluetooth access to be had, and the process would just respawn. -->
     <key>LimitLoadToSessionType</key>
     <string>Aqua</string>
+
+    <!-- A LaunchAgent's stderr is discarded otherwise. @LOGDIR@ is
+         substituted at install time: launchd expands nothing itself. -->
+    <key>StandardOutPath</key>
+    <string>@LOGDIR@/mvb530d.log</string>
+    <key>StandardErrorPath</key>
+    <string>@LOGDIR@/mvb530d.log</string>
 
     <key>ProcessType</key>
     <string>Background</string>

@@ -1,10 +1,11 @@
 # MV-B530 macOS CUPS driver — Kmart / Anko "Inkless A4 Printer"
 
-A native CUPS print queue for the **Kmart Anko Inkless A4 Printer**, so you can
-press ⌘P from any macOS app instead of being limited to the phone app.
+An **IPP Everywhere / AirPrint** printer application for the **Kmart Anko
+Inkless A4 Printer**, so you can press ⌘P from any macOS app — or from a phone
+on the same Wi-Fi — instead of being limited to the vendor's phone app.
 
-Swift, no runtime dependencies beyond macOS itself. No Python, no bundled
-interpreter, no third-party app.
+Swift. Installs without root, and without a PPD or a CUPS filter, so nothing
+here depends on the parts CUPS 3.x removes.
 
 ## Which printer is this?
 
@@ -51,45 +52,67 @@ finds the device and then gives up, because it only speaks HCRP:
 ```
 
 So the only route is the printer's own BLE protocol. This project implements
-that protocol and wires it into CUPS.
+that protocol and exposes it as a standards-compliant IPP printer.
 
 ## How it works
 
 ```
-⌘P → cupsd → cgpdftoraster → rastertomvb530 → mvb530 backend
-                                                    ↓ 127.0.0.1:9101
-                                              mvb530d (login session)
-                                                    ↓ CoreBluetooth
-                                                 printer
+⌘P → cupsd → PWG raster over IPP → mvb530-printer-app   (PAPPL, port 8631)
+                                        ↓ bluetooth:// device scheme
+                                   mvb530d              (CoreBluetooth)
+                                        ↓ BLE GATT
+                                     printer
 ```
 
 | Component | Role |
 |---|---|
-| `rastertomvb530` | CUPS filter. Greyscale raster → dither → protocol stream. |
-| `mvb530` | CUPS backend. Forwards the stream to the agent, maps the reply to a CUPS exit code. |
-| `mvb530d` | Print agent. Holds the Bluetooth grant, talks BLE to the printer. |
-| `mvb530.ppd` | A4 at 200 dpi, greyscale, darkness 1–5, dither on/off. |
+| `mvb530-printer-app` | PAPPL IPP service. Raster callbacks → dither → protocol stream, and a `bluetooth://` device scheme. |
+| `mvb530d` | Transport agent. Owns the Bluetooth link. |
 
-### Why there is a separate agent
+Both run as user LaunchAgents. Nothing is installed as root, and no PPD is
+authored here — `lpadmin -m everywhere` builds the queue from the IPP
+attributes the printer application advertises.
 
-A CUPS backend is spawned by `cupsd` as the `_lp` user. That context can never
-hold a Bluetooth TCC grant and can never show a permission prompt, so it cannot
-touch CoreBluetooth in any language. The radio work has to happen in the user's
-login session, and the two halves talk over loopback.
+### Discovery
 
-macOS additionally **sandboxes CUPS backends away from arbitrary filesystem
-paths** — a spool directory at `/usr/local/var/spool/...`, mode `0770` and group
-`_lp`, is not even `stat`-able from a backend, with no denial logged. Loopback
-HTTP is used instead, which the sandbox does permit: the stock `ipp`, `socket`
-and `lpd` backends all depend on networking.
+```
+_ipp._tcp,_universal     IPP Everywhere
+_ipps._tcp,_universal    AirPrint
+URF=V1.5,W8,PQ3-4-5,FN3,IS0-1,MT1-5,OB10,RS200
+pdl=image/pwg-raster,image/urf
+```
 
-### Why the agent is not an .app
+Because the service binds all interfaces, a phone or tablet on the same
+network can print to it, with the Mac relaying over Bluetooth — a
+Bluetooth-only printer becomes a shared network printer. The flip side is that
+anyone on your LAN can print to it and reach PAPPL's web interface. If that
+matters, bind it to loopback with `-o server-hostname=localhost`.
 
-`mvb530d` carries its own `Info.plist` in a `__TEXT,__info_plist` section, so it
-declares `NSBluetoothAlwaysUsageDescription` as a plain signed binary. It must
-still be started **by launchd** rather than from a shell: a shell-spawned
-process inherits the terminal's TCC identity and is killed on first
-CoreBluetooth call, whereas under launchd it is its own responsible process.
+### Why there are two processes
+
+The intent was one. It cannot be done on macOS.
+
+PAPPL must own the main thread: it creates an `NSStatusItem`, and AppKit throws
+*"NSWindow should only be instantiated on the main thread"* otherwise. It never
+pumps a CFRunLoop there. A `CBCentralManager` created in that process stays in
+`.unknown` and delivers no state callback — on the main thread or a worker,
+with or without an explicit dispatch queue, eagerly pre-warmed or lazy, under
+any code-signing identity. All of those were tried.
+
+So the radio lives in `mvb530d`, whose main thread does run a run loop, and the
+device scheme hands each job to it over loopback. That is still a large
+simplification: the previous design had a CUPS filter and backend installed as
+root under `/usr/libexec/cups`, plus a PPD.
+
+### Why neither binary is an .app
+
+Each embeds its own `Info.plist` in a `__TEXT,__info_plist` section, so it
+declares `NSBluetoothAlwaysUsageDescription` as a plain signed binary. They
+must be started **by launchd**: a shell-spawned process inherits the terminal's
+TCC identity and is killed on the first CoreBluetooth call, whereas under
+launchd each is its own responsible process. The two also need *different*
+ad-hoc signing identities — two binaries claiming one identity confuses the
+Bluetooth grant for both.
 
 ## Findings
 
@@ -115,35 +138,33 @@ GATT over the ISSC transparent UART service
 
 ## Install
 
-Requires macOS 12+, Apple Silicon or Intel, and the Command Line Tools.
-No Xcode needed.
+Needs macOS 13+, the Command Line Tools, and OpenSSL (`brew install openssl@3`)
+— PAPPL requires TLS. No Xcode.
 
 ```bash
-git clone https://github.com/hmvs/mv-b530-macos-cups-driver.git
+git clone --recursive https://github.com/hmvs/mv-b530-macos-cups-driver.git
 cd mv-b530-macos-cups-driver
-make test           # build and run the test suite
-sudo make install   # filter, backend, PPD, queue and the print agent
+make test      # builds PAPPL, then runs the test suite
+make install   # no sudo
 ```
 
-That is the whole install. `sudo make install` also registers the agent as a
-LaunchAgent in `/Library/LaunchAgents`, so it starts at login and restarts if
-it ever exits — there is no separate step and nothing to remember.
+`make install` puts two binaries in `~/.local/libexec`, registers both as user
+LaunchAgents so they start at login, and creates the driverless queue. To pin a
+particular printer rather than the first one found:
+
+```bash
+MVB530_PRINTER=MV-B530-38AC make install
+```
 
 The first print raises a Bluetooth permission prompt. Approve it once.
 
-To remove everything, including the queue and the LaunchAgent:
-
 ```bash
-sudo make uninstall
+make status     # are both services up?
+make restart    # after installing a new build
+make uninstall  # remove everything, including the queue
 ```
 
-### Managing the agent
-
-```bash
-make agent-status                                  # is it up?
-make agent-restart                                 # after installing a new build
-log stream --predicate 'process == "mvb530d"' --info
-```
+Logs are at `~/Library/Logs/mvb530.log` and `~/Library/Logs/mvb530d.log`.
 
 ## Usage
 
@@ -155,31 +176,27 @@ any app. A page takes about six seconds to transfer.
 
 You can hit ⌘P first and switch the printer on afterwards. The job waits.
 
-- The **agent** keeps scanning for up to `--wait` seconds (default **180**).
-- If it still cannot find the printer it returns 503, and the **backend** exits
-  `CUPS_BACKEND_RETRY`, so the queue stays enabled and the job stays queued.
-- CUPS then retries on its own schedule: `JobRetryInterval` (default **30 s**)
-  and `JobRetryLimit` (default **5**).
+- The **agent** keeps scanning for up to `--wait` seconds (default **180**),
+  restarting the scan every 15 s because a long CoreBluetooth scan goes quiet.
+- If the printer still has not appeared it reports the job failed, and the
+  local queue is created `printer-error-policy=retry-job`, so CUPS retries
+  rather than disabling it.
+- CUPS retries on its own schedule: `JobRetryInterval` (default **30 s**) and
+  `JobRetryLimit` (default **5**).
 
-So the default tolerance is roughly `5 × (180 + 30)` ≈ **17 minutes** before
-CUPS gives up on the job. To wait longer, raise the agent's window — that lever
-belongs to this driver, unlike the CUPS globals:
-
-```bash
-mvb530d --wait 900     # ~77 minutes of tolerance
-```
+To wait longer, raise the agent's window in
+`~/Library/LaunchAgents/org.hmvs.mvb530d.plist` — add `--wait 900` to its
+`ProgramArguments` for roughly 77 minutes of tolerance.
 
 ### Does macOS show it as offline?
 
-Yes, once a job has tried. The backend emits `STATE: +offline-report` when the
-printer cannot be reached and `STATE: -offline-report` when a page goes
-through, which is what Printers & Scanners and the print dialog turn into
-"Printer is offline".
+The device scheme reports `PAPPL_PREASON_OFFLINE` when the agent cannot be
+reached, which PAPPL turns into an IPP `printer-state-reasons` value and CUPS
+surfaces in Printers & Scanners.
 
-The important caveat: CUPS only learns this **when a job runs**. There is no
-background polling, so switching the printer on does not immediately flip the
-UI to online — the status updates on the next job or retry. A queue that has
-never printed shows simply as idle.
+The caveat is the same as before: state is only refreshed **when a job runs or
+PAPPL polls**, so switching the printer on does not instantly flip the UI. For
+a live answer, ask the agent.
 
 If you want a live answer at any moment, ask the agent instead:
 
@@ -192,8 +209,10 @@ curl localhost:9101/scan
 ```bash
 curl localhost:9101/health              # agent and Bluetooth state
 curl localhost:9101/scan                # nearby supported printers
-curl -X POST localhost:9101/testpage    # print a test pattern, no CUPS involved
-make agent-status
+curl -X POST localhost:9101/testpage    # test pattern, no CUPS or IPP involved
+ipptool -t ipp://localhost:8631/ipp/print/anko get-printer-attributes.test
+dns-sd -B '_ipp._tcp,_universal' local  # what AirPrint would see
+~/.local/libexec/mvb530-printer-app status
 ```
 
 ## Tests
@@ -202,15 +221,15 @@ make agent-status
 make test
 ```
 
-95 checks, no hardware required. The protocol tests assert **byte-for-byte**
+78 checks, no hardware required. The protocol tests assert **byte-for-byte**
 against 13 golden vectors produced by the reference implementation
 ([TiMini-Print](https://github.com/Dejniel/TiMini-Print)), so the encoder is
 checked against a known-good encoder rather than against itself. Coverage
 includes CRC-8, packet framing, RLE (including runs over 127 and the raw
 fallback), bit order, tail-feed arithmetic, nearest-neighbour scaling, Atkinson
 dithering, and the filter end to end against synthetic CUPS rasters in four
-colour spaces — plus a malformed-header case that must be rejected rather than
-read past the end of the row buffer.
+colour spaces — plus short-row cases that must come back white rather than
+read past the end of the buffer.
 
 Regenerating the golden vectors is the only thing that needs Python, and only
 for maintainers:
@@ -225,14 +244,19 @@ make fixtures
 - One job at a time; the agent serialises on the Bluetooth link.
 - The printer must be on before the job reaches it, and cannot print while
   charging.
-- Tested on macOS 26.6, Apple Silicon.
+- Tested on macOS 26.6, Apple Silicon. AirPrint discovery is verified from the
+  DNS-SD records; printing from iOS and Android is untested.
+- PAPPL is vendored and built from source: it is not packaged for Homebrew.
 
 ## Credits
 
+[PAPPL](https://github.com/michaelrsweet/pappl) by Michael R Sweet (Apache 2.0)
+provides the IPP service; it is vendored as a submodule pinned to v1.4.12.
+
 The protocol was reverse-engineered with reference to
 [TiMini-Print](https://github.com/Dejniel/TiMini-Print) by Daniel Banecki
-(Apache 2.0), which is vendored as a submodule and used only to generate the
-golden test vectors. It is not required to build or run this driver.
+(Apache 2.0), also vendored, and used only to generate the golden test
+vectors. It is not required to build or run this driver.
 
 ## Licence
 

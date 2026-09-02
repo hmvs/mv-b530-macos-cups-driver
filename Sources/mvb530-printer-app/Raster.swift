@@ -80,30 +80,12 @@ let startPageCallback: pappl_pr_rstartpage_cb_t = { job, options, device, _ in
 let writeLineCallback: pappl_pr_rwriteline_cb_t = { _, _, _, y, line in
     guard let line, Int(y) < rasterJob.height else { return true }
 
-    let row = UnsafeBufferPointer(start: line, count: rasterJob.bytesPerLine)
-    var luma = [UInt8](repeating: 255, count: rasterJob.sourceWidth)
-
-    switch rasterJob.bitsPerPixel {
-    case 8:
-        for x in 0..<rasterJob.sourceWidth {
-            luma[x] = rasterJob.inverted ? 255 &- row[x] : row[x]
-        }
-    case 1:
-        for x in 0..<rasterJob.sourceWidth {
-            let bit = (row[x / 8] >> UInt8(7 - x % 8)) & 1
-            // In K a set bit means ink; in W it means white.
-            let black = rasterJob.inverted ? bit == 1 : bit == 0
-            luma[x] = black ? 0 : 255
-        }
-    case 24:
-        for x in 0..<rasterJob.sourceWidth {
-            let r = Int(row[x * 3]), g = Int(row[x * 3 + 1]), b = Int(row[x * 3 + 2])
-            // Rec. 601 luma.
-            luma[x] = UInt8((r * 77 + g * 150 + b * 29) >> 8)
-        }
-    default:
-        break
-    }
+    let row = Array(UnsafeBufferPointer(start: line,
+                                        count: rasterJob.bytesPerLine))
+    let luma = Bilevel.lumaRow(row[...], width: rasterJob.sourceWidth,
+                               bitsPerPixel: rasterJob.bitsPerPixel,
+                               polarity: rasterJob.inverted ? .blackIsHigh
+                                                            : .whiteIsHigh)
 
     let scaled = Bilevel.scaleRow(luma[...], to: renderWidth)
     let start = Int(y) * renderWidth

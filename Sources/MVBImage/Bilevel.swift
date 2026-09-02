@@ -12,7 +12,60 @@ public enum Dither: Sendable {
     case atkinson
 }
 
+/// How a raster row encodes ink.
+public enum Polarity: Sendable {
+    /// 0 is black (CUPS_CSPACE_W / SW, and PWG sGray).
+    case whiteIsHigh
+    /// 255 is black (CUPS_CSPACE_K).
+    case blackIsHigh
+}
+
 public enum Bilevel {
+    /// Normalise one raster row to luma, where 0 is black and 255 is white.
+    ///
+    /// `row` must hold at least the bytes the geometry implies; callers are
+    /// expected to have validated that against the raster header, since a
+    /// header claiming more pixels than the row holds is a real failure mode.
+    /// Anything unrecognised comes back white, so a page prints blank rather
+    /// than solid black and wastes the sheet.
+    public static func lumaRow(_ row: ArraySlice<UInt8>, width: Int,
+                               bitsPerPixel: Int,
+                               polarity: Polarity) -> [UInt8] {
+        var out = [UInt8](repeating: 255, count: max(0, width))
+        guard width > 0 else { return out }
+        let base = row.startIndex
+        let inverted = polarity == .blackIsHigh
+
+        switch bitsPerPixel {
+        case 8:
+            guard row.count >= width else { return out }
+            for x in 0..<width {
+                let value = row[base + x]
+                out[x] = inverted ? 255 &- value : value
+            }
+        case 1:
+            guard row.count >= (width + 7) / 8 else { return out }
+            for x in 0..<width {
+                let bit = (row[base + x / 8] >> UInt8(7 - x % 8)) & 1
+                // In K a set bit means ink; in W it means white.
+                let black = inverted ? bit == 1 : bit == 0
+                out[x] = black ? 0 : 255
+            }
+        case 24:
+            guard row.count >= width * 3 else { return out }
+            for x in 0..<width {
+                let r = Int(row[base + x * 3])
+                let g = Int(row[base + x * 3 + 1])
+                let b = Int(row[base + x * 3 + 2])
+                // Rec. 601 luma, the usual greyscale conversion.
+                out[x] = UInt8((r * 77 + g * 150 + b * 29) >> 8)
+            }
+        default:
+            break
+        }
+        return out
+    }
+
     /// Scale one row horizontally with nearest-neighbour sampling. Cheap and
     /// artefact-free at the near-integer ratios we see, and it keeps hard
     /// edges crisp, which matters more than smoothness on a 1-bit device.
