@@ -76,12 +76,21 @@ uninstall:
 agent-start:
 	@BIN=$$(test -x $(PREFIX)/libexec/mvb530d && echo $(PREFIX)/libexec/mvb530d \
 		|| echo $$(pwd)/$(RELEASE)/mvb530d); \
-	launchctl remove $(AGENT_LABEL) 2>/dev/null; sleep 1; \
+	for label in $$(launchctl list | awk '/org\.hmvs\.mvb530d/ {print $$3}'); do \
+		launchctl remove $$label 2>/dev/null; \
+	done; \
+	pkill -x mvb530d 2>/dev/null; \
+	sleep 2; \
+	if lsof -nP -iTCP:9101 -sTCP:LISTEN >/dev/null 2>&1; then \
+		echo "port 9101 is held by another process:" >&2; \
+		lsof -nP -iTCP:9101 -sTCP:LISTEN >&2; \
+		exit 1; \
+	fi; \
 	launchctl submit -l $(AGENT_LABEL) \
 		-o /tmp/mvb530d.out -e /tmp/mvb530d.err -- $$BIN --verbose; \
 	sleep 3; \
 	if curl -sf -m 5 http://127.0.0.1:9101/health >/dev/null; then \
-		echo "agent running: $$BIN"; \
+		echo "agent running: $$(pgrep -fl mvb530d | head -1)"; \
 		curl -s http://127.0.0.1:9101/health; \
 	else \
 		echo "agent failed to start; see /tmp/mvb530d.err" >&2; \
@@ -89,7 +98,10 @@ agent-start:
 	fi
 
 agent-stop:
-	-launchctl remove $(AGENT_LABEL) 2>/dev/null
+	@for label in $$(launchctl list | awk '/org\.hmvs\.mvb530d/ {print $$3}'); do \
+		launchctl remove $$label 2>/dev/null; \
+	done; \
+	pkill -x mvb530d 2>/dev/null; true
 	@echo "agent stopped"
 
 agent-status:
