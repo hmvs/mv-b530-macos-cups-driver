@@ -4,7 +4,7 @@
 #
 # None of it works with the Kmart/Anko Inkless A4 (MV-B530): that driver only
 # prints over USB, and this printer's USB-C port is power-only. The MV-B530 is
-# driven over Bluetooth by the TiMini CUPS driver instead, which shares nothing
+# driven over Bluetooth by the native mvb530 driver in this repo instead, which shares nothing
 # with these files.
 #
 #   sudo ./uninstall-kuaimai.sh          app + driver + prefs

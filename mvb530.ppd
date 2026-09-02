@@ -1,14 +1,16 @@
 *PPD-Adobe: "4.3"
+*% Anko Inkless A4 Printer (Kmart 43618996) / MV-B530 and clones.
+*% Pairs with the rastertomvb530 filter and the mvb530 backend.
 *FormatVersion: "4.3"
-*FileVersion: "1.0"
+*FileVersion: "2.0"
 *LanguageVersion: English
 *LanguageEncoding: ISOLatin1
-*PCFileName: "TIMINI.PPD"
+*PCFileName: "MVB530.PPD"
 *Manufacturer: "Anko"
 *Product: "(Inkless A4 Printer)"
 *ModelName: "Anko Inkless A4 MV-B530"
 *ShortNickName: "Anko Inkless A4"
-*NickName: "Anko Inkless A4 (MV-B530, TiMini)"
+*NickName: "Anko Inkless A4 (MV-B530)"
 *PSVersion: "(3010.000) 0"
 *LanguageLevel: "3"
 *ColorDevice: False
@@ -17,9 +19,12 @@
 *Throughput: "1"
 *LandscapeOrientation: Plus90
 *TTRasterizer: Type42
-*cupsFilter: "application/pdf 0 -"
-*cupsManualCopies: True
 
+*% cupsd rasterises the job and hands it to our filter.
+*cupsFilter: "application/vnd.cups-raster 0 rastertomvb530"
+
+*% The imageable area is exactly 8 inches wide, so at 200 dpi cupsWidth comes
+*% out at the printer's native 1600 dots and no rescaling is needed.
 *OpenUI *PageSize/Media Size: PickOne
 *OrderDependency: 10 AnySetup *PageSize
 *DefaultPageSize: A4
@@ -33,7 +38,7 @@
 *CloseUI: *PageRegion
 
 *DefaultImageableArea: A4
-*ImageableArea A4/A4: "0 0 595 842"
+*ImageableArea A4/A4: "10 0 586 842"
 *DefaultPaperDimension: A4
 *PaperDimension A4/A4: "595 842"
 
@@ -43,8 +48,16 @@
 *Resolution 200dpi/200 dpi: "<</HWResolution[200 200]>>setpagedevice"
 *CloseUI: *Resolution
 
+*% Eight-bit greyscale in, so the filter can dither rather than take whatever
+*% one-bit output the rasteriser would have produced.
+*OpenUI *ColorModel/Color Mode: PickOne
+*OrderDependency: 30 AnySetup *ColorModel
+*DefaultColorModel: Gray
+*ColorModel Gray/Greyscale: "<</cupsColorSpace 0/cupsBitsPerColor 8/cupsColorOrder 0>>setpagedevice"
+*CloseUI: *ColorModel
+
 *OpenUI *Darkness/Darkness: PickOne
-*OrderDependency: 30 AnySetup *Darkness
+*OrderDependency: 40 AnySetup *Darkness
 *DefaultDarkness: 3
 *Darkness 1/1 - Lightest: ""
 *Darkness 2/2: ""
@@ -52,6 +65,13 @@
 *Darkness 4/4: ""
 *Darkness 5/5 - Darkest: ""
 *CloseUI: *Darkness
+
+*OpenUI *MvbDither/Halftone: PickOne
+*OrderDependency: 50 AnySetup *MvbDither
+*DefaultMvbDither: Atkinson
+*MvbDither Atkinson/Atkinson dither - photos: ""
+*MvbDither None/Threshold - text and line art: ""
+*CloseUI: *MvbDither
 
 *DefaultFont: Courier
 *Font Courier: Standard "(002.004S)" Standard ROM
