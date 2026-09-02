@@ -95,7 +95,9 @@ if let transportError {
     FileHandle.standardError.write(Data("""
         ERROR: cannot reach the print agent at \(agentURL)
         ERROR: \(transportError.localizedDescription)
-        ERROR: start it with 'make agent-start', then the job will retry
+        ERROR: the agent should be running as a LaunchAgent; check with
+        ERROR:   launchctl print gui/$(id -u)/org.hmvs.mvb530d
+        ERROR: the job stays queued and will retry
 
         """.utf8))
     exit(backendRetry)

@@ -1,12 +1,13 @@
 # Anko Inkless A4 (MV-B530) macOS CUPS driver.
 #
-#   make            build and run the tests
-#   make build      build only
-#   make test       run the test suite
-#   sudo make install     install the filter, backend, PPD and queue
-#   make agent-start      run the print agent in this login session
-#   make agent-stop       stop it
+#   make                  build and run the tests
+#   make build            build only
+#   make test             run the test suite
+#   make universal        universal (arm64 + x86_64) binaries for release
+#   sudo make install     filter, backend, PPD, queue and the LaunchAgent
 #   sudo make uninstall   remove everything this installed
+#   make agent-status     is the agent up?
+#   make agent-restart    restart it after installing a new build
 
 PREFIX      ?= /usr/local
 QUEUE       ?= Anko_Inkless_A4
@@ -14,10 +15,18 @@ FILTER_DIR  := /usr/libexec/cups/filter
 BACKEND_DIR := /usr/libexec/cups/backend
 PPD_DIR     := /Library/Printers/PPDs/Contents/Resources
 AGENT_LABEL := org.hmvs.mvb530d
+AGENT_PLIST := /Library/LaunchAgents/$(AGENT_LABEL).plist
 RELEASE     := .build/release
+UNIVERSAL   := .build/universal
+# Which build to install from. Override for a universal release build:
+#   sudo make install BINDIR=.build/universal
+BINDIR      ?= $(RELEASE)
+# A LaunchAgent must be bootstrapped into the GUI domain of the logged-in
+# user, which is not root even when make is.
+CONSOLE_UID := $(shell stat -f %u /dev/console)
 
-.PHONY: all build test install uninstall agent-start agent-stop agent-status \
-        fixtures clean
+.PHONY: all build test install uninstall agent-restart agent-start agent-stop \
+        agent-status fixtures universal clean
 
 all: test
 
@@ -34,16 +43,22 @@ test: build
 install:
 	@if [ "$$(id -u)" -ne 0 ]; then \
 		echo "run: sudo make install" >&2; exit 1; fi
-	@if [ ! -x "$(RELEASE)/rastertomvb530" ]; then \
+	@if [ ! -x "$(BINDIR)/rastertomvb530" ]; then \
 		echo "run 'make build' first (as your own user, not root)" >&2; exit 1; fi
-	install -o root -g wheel -m 0755 $(RELEASE)/rastertomvb530 $(FILTER_DIR)/rastertomvb530
-	install -o root -g wheel -m 0755 $(RELEASE)/mvb530-backend $(BACKEND_DIR)/mvb530
+	install -o root -g wheel -m 0755 $(BINDIR)/rastertomvb530 $(FILTER_DIR)/rastertomvb530
+	install -o root -g wheel -m 0755 $(BINDIR)/mvb530-backend $(BACKEND_DIR)/mvb530
 	install -d -o root -g wheel -m 0755 $(PREFIX)/libexec
-	install -o root -g wheel -m 0755 $(RELEASE)/mvb530d $(PREFIX)/libexec/mvb530d
+	install -o root -g wheel -m 0755 $(BINDIR)/mvb530d $(PREFIX)/libexec/mvb530d
 	@# The PPD directory is not guaranteed to exist: removing another
 	@# vendor's driver can take Contents/ with it.
 	install -d -o root -g admin -m 0755 $(PPD_DIR)
 	install -o root -g admin -m 0644 mvb530.ppd $(PPD_DIR)/mvb530.ppd
+	@echo "==> installing the print agent as a LaunchAgent"
+	install -o root -g wheel -m 0644 packaging/$(AGENT_LABEL).plist $(AGENT_PLIST)
+	@# A LaunchAgent has to be loaded into the logged-in user's GUI domain:
+	@# CoreBluetooth needs a GUI session and the TCC grant is the user's.
+	-launchctl bootout gui/$(CONSOLE_UID)/$(AGENT_LABEL) 2>/dev/null || true
+	launchctl bootstrap gui/$(CONSOLE_UID) $(AGENT_PLIST)
 	@echo "==> restarting cupsd so it sees the new filter and backend"
 	-launchctl kickstart -k system/org.cups.cupsd 2>/dev/null || killall -HUP cupsd 2>/dev/null || true
 	@sleep 2
@@ -57,22 +72,36 @@ install:
 	-cupsenable $(QUEUE) 2>/dev/null || true
 	-cupsaccept $(QUEUE) 2>/dev/null || true
 	@echo
-	@echo "installed. Now start the agent as your own user:"
-	@echo "    make agent-start"
+	@echo "installed. The agent starts at login from now on; nothing else to do."
+	@echo "Print to \"$(QUEUE)\" from any app."
 
 uninstall:
 	@if [ "$$(id -u)" -ne 0 ]; then \
 		echo "run: sudo make uninstall" >&2; exit 1; fi
+	-launchctl bootout gui/$(CONSOLE_UID)/$(AGENT_LABEL) 2>/dev/null || true
+	rm -f $(AGENT_PLIST)
 	-lpadmin -x $(QUEUE) 2>/dev/null
 	rm -f $(FILTER_DIR)/rastertomvb530 $(BACKEND_DIR)/mvb530
 	rm -f $(PREFIX)/libexec/mvb530d $(PPD_DIR)/mvb530.ppd
 	-launchctl kickstart -k system/org.cups.cupsd 2>/dev/null || true
-	@echo "removed. Stop the agent with: make agent-stop"
+	@echo "removed."
 
-# The agent must be started by launchd, not from a shell. A shell-spawned
-# process inherits the terminal's TCC identity and is killed the moment it
-# touches CoreBluetooth; under launchd it is its own responsible process and
-# its embedded Info.plist applies.
+# Restart the installed agent, e.g. after `sudo make install` of a new build.
+agent-restart:
+	@if [ ! -f $(AGENT_PLIST) ]; then \
+		echo "no LaunchAgent installed - run 'sudo make install'" >&2; exit 1; fi
+	launchctl kickstart -k gui/$(CONSOLE_UID)/$(AGENT_LABEL)
+	@sleep 3
+	@curl -sf -m 5 http://127.0.0.1:9101/health || \
+		echo "agent not responding; log stream --predicate 'process == \"mvb530d\"'" >&2
+
+# Development helper: run an uninstalled build. Not needed once installed -
+# launchd starts the agent at login.
+#
+# It must be started by launchd either way. A shell-spawned process inherits
+# the terminal's TCC identity and is killed the moment it touches
+# CoreBluetooth; under launchd it is its own responsible process, so its
+# embedded Info.plist applies.
 agent-start:
 	@BIN=$$(test -x $(PREFIX)/libexec/mvb530d && echo $(PREFIX)/libexec/mvb530d \
 		|| echo $$(pwd)/$(RELEASE)/mvb530d); \
@@ -116,6 +145,20 @@ fixtures:
 	/tmp/mvbfix-venv/bin/pip install --quiet -r vendor/TiMini-Print/requirements.txt
 	/tmp/mvbfix-venv/bin/python tools/gen_fixtures.py > tests/fixtures/line_eight.txt
 	@echo "regenerated tests/fixtures/line_eight.txt"
+
+# Universal binaries for distribution. Built per-architecture and lipo'd
+# rather than with `swift build --arch`, which needs a full Xcode install.
+universal:
+	swift build -c release --triple arm64-apple-macosx12.0
+	swift build -c release --triple x86_64-apple-macosx12.0
+	@mkdir -p $(UNIVERSAL)
+	@for bin in rastertomvb530 mvb530-backend mvb530d; do \
+		lipo -create -output $(UNIVERSAL)/$$bin \
+			.build/arm64-apple-macosx/release/$$bin \
+			.build/x86_64-apple-macosx/release/$$bin || exit 1; \
+	done
+	codesign --force -s - --identifier $(AGENT_LABEL) $(UNIVERSAL)/mvb530d
+	@lipo -info $(UNIVERSAL)/*
 
 clean:
 	rm -rf .build

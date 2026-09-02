@@ -46,8 +46,8 @@ macOS cannot reach it over Bluetooth either. The stock CUPS `bluetooth` backend
 finds the device and then gives up, because it only speaks HCRP:
 
 ```
-[HCRP-CUPS] Found device MV-B530-38AC
-[HCRP-CUPS] No SDP record for MV-B530-38AC.
+[HCRP-CUPS] Found device MV-B530-XXXX
+[HCRP-CUPS] No SDP record for MV-B530-XXXX.
 ```
 
 So the only route is the printer's own BLE protocol. This project implements
@@ -122,32 +122,28 @@ No Xcode needed.
 git clone https://github.com/hmvs/mv-b530-macos-cups-driver.git
 cd mv-b530-macos-cups-driver
 make test           # build and run the test suite
-sudo make install   # filter, backend, PPD and the queue
-make agent-start    # start the agent in your login session
+sudo make install   # filter, backend, PPD, queue and the print agent
 ```
 
-The first print will raise a Bluetooth permission prompt. Approve it.
+That is the whole install. `sudo make install` also registers the agent as a
+LaunchAgent in `/Library/LaunchAgents`, so it starts at login and restarts if
+it ever exits — there is no separate step and nothing to remember.
 
-To start the agent automatically at login, create
-`~/Library/LaunchAgents/org.hmvs.mvb530d.plist`:
+The first print raises a Bluetooth permission prompt. Approve it once.
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key><string>org.hmvs.mvb530d</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/libexec/mvb530d</string>
-    </array>
-    <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
-</dict>
-</plist>
+To remove everything, including the queue and the LaunchAgent:
+
+```bash
+sudo make uninstall
 ```
 
-then `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.hmvs.mvb530d.plist`.
+### Managing the agent
+
+```bash
+make agent-status                                  # is it up?
+make agent-restart                                 # after installing a new build
+log stream --predicate 'process == "mvb530d"' --info
+```
 
 ## Usage
 

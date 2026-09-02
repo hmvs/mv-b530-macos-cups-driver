@@ -9,6 +9,7 @@
 /// it declares NSBluetoothAlwaysUsageDescription without being an .app bundle.
 import Foundation
 import MVBProtocol
+import os
 
 // MARK: - Configuration
 
@@ -60,7 +61,16 @@ func parseArguments() -> Configuration {
 
 let config = parseArguments()
 
+/// Logs to the unified log, so a LaunchAgent needs no writable file path -
+/// a fixed one under /tmp would be shared between users and world-writable.
+///
+///     log stream --predicate 'process == "mvb530d"' --info
+///
+/// Also mirrored to stderr, which is where it lands when run by hand.
+let logger = Logger(subsystem: "org.hmvs.mvb530d", category: "agent")
+
 func log(_ message: String) {
+    logger.info("\(message, privacy: .public)")
     let stamp = ISO8601DateFormatter().string(from: Date())
     FileHandle.standardError.write(Data("\(stamp) \(message)\n".utf8))
 }
