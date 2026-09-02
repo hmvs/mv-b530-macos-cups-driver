@@ -1,3 +1,6 @@
 [submodule "vendor/TiMini-Print"]
 	path = vendor/TiMini-Print
 	url = https://github.com/Dejniel/TiMini-Print.git
+[submodule "vendor/pappl"]
+	path = vendor/pappl
+	url = https://github.com/michaelrsweet/pappl.git

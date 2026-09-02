@@ -9,6 +9,7 @@
 /// it declares NSBluetoothAlwaysUsageDescription without being an .app bundle.
 import Foundation
 import MVBProtocol
+import MVBTransport
 import os
 
 // MARK: - Configuration

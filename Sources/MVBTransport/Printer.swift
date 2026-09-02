@@ -8,19 +8,19 @@ import CoreBluetooth
 import Foundation
 
 /// Bluetooth names of MV-B530 and its documented clones.
-let supportedNamePrefixes = ["MV-B530", "GL-VS9", "QDID", "X9"]
+public let supportedNamePrefixes = ["MV-B530", "GL-VS9", "QDID", "X9"]
 
 let uartService = CBUUID(string: "49535343-FE7D-4AE5-8FA9-9FAFD205E455")
 let uartWriteCharacteristic = CBUUID(string: "49535343-8841-43F4-A8D4-ECBE34729BB3")
 
-enum PrinterError: Error, CustomStringConvertible {
+public enum PrinterError: Error, CustomStringConvertible {
     case bluetoothUnavailable(String)
     case notFound
     case connectFailed(String)
     case noWriteCharacteristic
     case timedOut(String)
 
-    var description: String {
+    public var description: String {
         switch self {
         case let .bluetoothUnavailable(state):
             return "Bluetooth is not available (\(state))"
@@ -36,7 +36,7 @@ enum PrinterError: Error, CustomStringConvertible {
     }
 
     /// Whether the caller should ask CUPS to retry rather than fail the job.
-    var isTransient: Bool {
+    public var isTransient: Bool {
         switch self {
         case .notFound, .connectFailed, .timedOut:
             return true
@@ -46,14 +46,14 @@ enum PrinterError: Error, CustomStringConvertible {
     }
 }
 
-struct DiscoveredPrinter {
-    let name: String
-    let identifier: UUID
+public struct DiscoveredPrinter {
+    public let name: String
+    public let identifier: UUID
 }
 
 /// Serialises all CoreBluetooth work onto one queue and exposes blocking
 /// calls, which suits a print spooler: one job at a time, in order.
-final class Printer: NSObject {
+public final class Printer: NSObject {
     private let queue = DispatchQueue(label: "org.hmvs.mvb530d.ble")
     private var central: CBCentralManager!
 
@@ -69,9 +69,24 @@ final class Printer: NSObject {
     private var connectContinuation: ((Result<Void, PrinterError>) -> Void)?
     private var readyContinuation: (() -> Void)?
 
-    override init() {
+    public override init() {
         super.init()
         central = CBCentralManager(delegate: self, queue: queue)
+    }
+
+    /// Bring CoreBluetooth up and wait for it to report a state.
+    ///
+    /// Call this from the main thread during start-up. A central manager
+    /// first touched from a worker thread never leaves `.unknown`, so the
+    /// first print would otherwise fail with "Bluetooth is not available".
+    @discardableResult
+    public func prewarm(timeout: TimeInterval = 15) -> Bool {
+        let ready = waitForPower(timeout: timeout)
+        let note = "mvb530: bluetooth "
+            + (ready ? "ready" : "not ready")
+            + " (\(bluetoothState))\n"
+        FileHandle.standardError.write(Data(note.utf8))
+        return ready
     }
 
     // MARK: - Power
@@ -98,8 +113,8 @@ final class Printer: NSObject {
 
     /// Scan for supported printers. Always runs the full duration so the
     /// caller sees every device in range, not just the first.
-    func scan(duration: TimeInterval = 6.0) -> [DiscoveredPrinter] {
-        guard waitForPower(timeout: 5) else { return [] }
+    public func scan(duration: TimeInterval = 6.0) -> [DiscoveredPrinter] {
+        guard waitForPower(timeout: 15) else { return [] }
 
         queue.sync {
             found.removeAll()
@@ -166,10 +181,10 @@ final class Printer: NSObject {
     // MARK: - Printing
 
     /// Connect, write the whole stream, and disconnect. Blocks until done.
-    func send(_ payload: [UInt8], to wanted: String?,
+    public func send(_ payload: [UInt8], to wanted: String?,
               waitFor: TimeInterval = 180,
               log: @escaping (String) -> Void) throws {
-        guard waitForPower(timeout: 5) else {
+        guard waitForPower(timeout: 15) else {
             throw PrinterError.bluetoothUnavailable(stateDescription())
         }
 
@@ -268,20 +283,20 @@ final class Printer: NSObject {
         }
     }
 
-    var bluetoothState: String { queue.sync { stateDescription() } }
+    public var bluetoothState: String { queue.sync { stateDescription() } }
 }
 
 // MARK: - CBCentralManagerDelegate
 
 extension Printer: CBCentralManagerDelegate {
-    func centralManagerDidUpdateState(_ manager: CBCentralManager) {
+    public func centralManagerDidUpdateState(_ manager: CBCentralManager) {
         poweredOn = manager.state == .poweredOn
         let waiters = powerWaiters
         powerWaiters.removeAll()
         for waiter in waiters { waiter(poweredOn) }
     }
 
-    func centralManager(_ manager: CBCentralManager,
+    public func centralManager(_ manager: CBCentralManager,
                         didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any],
                         rssi RSSI: NSNumber) {
@@ -293,12 +308,12 @@ extension Printer: CBCentralManagerDelegate {
         found[peripheral.identifier] = (peripheral, name)
     }
 
-    func centralManager(_ manager: CBCentralManager,
+    public func centralManager(_ manager: CBCentralManager,
                         didConnect peripheral: CBPeripheral) {
         peripheral.discoverServices([uartService])
     }
 
-    func centralManager(_ manager: CBCentralManager,
+    public func centralManager(_ manager: CBCentralManager,
                         didFailToConnect peripheral: CBPeripheral,
                         error: Error?) {
         let continuation = connectContinuation
@@ -307,7 +322,7 @@ extension Printer: CBCentralManagerDelegate {
             error?.localizedDescription ?? "unknown reason")))
     }
 
-    func centralManager(_ manager: CBCentralManager,
+    public func centralManager(_ manager: CBCentralManager,
                         didDisconnectPeripheral peripheral: CBPeripheral,
                         error: Error?) {
         if let continuation = connectContinuation {
@@ -321,7 +336,7 @@ extension Printer: CBCentralManagerDelegate {
 // MARK: - CBPeripheralDelegate
 
 extension Printer: CBPeripheralDelegate {
-    func peripheral(_ peripheral: CBPeripheral,
+    public func peripheral(_ peripheral: CBPeripheral,
                     didDiscoverServices error: Error?) {
         if let error {
             let continuation = connectContinuation
@@ -340,7 +355,7 @@ extension Printer: CBPeripheralDelegate {
         peripheral.discoverCharacteristics([uartWriteCharacteristic], for: service)
     }
 
-    func peripheral(_ peripheral: CBPeripheral,
+    public func peripheral(_ peripheral: CBPeripheral,
                     didDiscoverCharacteristicsFor service: CBService,
                     error: Error?) {
         let continuation = connectContinuation
@@ -360,7 +375,7 @@ extension Printer: CBPeripheralDelegate {
         continuation?(.success(()))
     }
 
-    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+    public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         let continuation = readyContinuation
         readyContinuation = nil
         continuation?()
