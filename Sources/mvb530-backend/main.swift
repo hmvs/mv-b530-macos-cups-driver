@@ -12,8 +12,14 @@ let backendOK: Int32 = 0
 let backendFailed: Int32 = 1
 let backendRetry: Int32 = 6
 
+/// cupsd reads STATE:, INFO: and ERROR: lines from a backend's stderr.
+/// STATE: +offline-report is what surfaces as "Printer is offline" in the UI.
+func report(_ line: String) {
+    FileHandle.standardError.write(Data("\(line)\n".utf8))
+}
+
 func fail(_ message: String, code: Int32) -> Never {
-    FileHandle.standardError.write(Data("\(message)\n".utf8))
+    report(message)
     exit(code)
 }
 
@@ -83,10 +89,13 @@ if semaphore.wait(timeout: .now() + 310) == .timedOut {
 if let transportError {
     // Agent not running is worth retrying: the queue should stay enabled so
     // the job goes through once the user starts it.
+    // The agent being down is not the printer being offline, so report it as
+    // its own condition rather than blaming the hardware.
+    report("STATE: +connecting-to-device")
     FileHandle.standardError.write(Data("""
         ERROR: cannot reach the print agent at \(agentURL)
         ERROR: \(transportError.localizedDescription)
-        ERROR: start it with start-agent.sh, then the job will retry
+        ERROR: start it with 'make agent-start', then the job will retry
 
         """.utf8))
     exit(backendRetry)
@@ -94,13 +103,17 @@ if let transportError {
 
 switch status {
 case 200:
-    FileHandle.standardError.write(Data("INFO: printed\n".utf8))
+    report("STATE: -offline-report,connecting-to-device")
+    report("INFO: printed")
     exit(backendOK)
 case 503:
-    // Printer asleep or out of range: keep the queue enabled and come back.
-    FileHandle.standardError.write(
-        Data("INFO: printer unreachable, will retry - \(body)\n".utf8))
+    // Printer asleep or out of range. offline-report is what macOS turns into
+    // "Printer is offline" in Printers & Scanners and the print dialog; the
+    // queue stays enabled and CUPS comes back to the job.
+    report("STATE: +offline-report")
+    report("INFO: printer is offline - the job will print when it is switched on")
     exit(backendRetry)
 default:
+    report("STATE: -offline-report")
     fail("ERROR: print failed (HTTP \(status)): \(body)", code: backendFailed)
 }

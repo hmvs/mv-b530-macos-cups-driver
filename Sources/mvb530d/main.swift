@@ -15,6 +15,9 @@ import MVBProtocol
 struct Configuration {
     var port: UInt16 = 9101
     var printerName: String?
+    /// How long to wait for a sleeping printer to appear before telling the
+    /// backend to have CUPS retry.
+    var waitSeconds: TimeInterval = 180
     var verbose = false
 }
 
@@ -30,15 +33,21 @@ func parseArguments() -> Configuration {
             }
         case "--printer":
             config.printerName = iterator.next()
+        case "--wait":
+            if let value = iterator.next(), let seconds = Double(value) {
+                config.waitSeconds = seconds
+            }
         case "--verbose":
             config.verbose = true
         case "--help", "-h":
             print("""
-                usage: mvb530d [--port N] [--printer NAME] [--verbose]
+                usage: mvb530d [--port N] [--printer NAME] [--wait S] [--verbose]
 
                   --port N        loopback port to listen on (default 9101)
                   --printer NAME  exact Bluetooth name; default is the first
                                   supported printer found
+                  --wait S        how long to wait for a sleeping printer to
+                                  appear before asking CUPS to retry (180)
                   --verbose       log every request
                 """)
             exit(0)
@@ -203,7 +212,10 @@ func handle(_ request: Request, client: Int32) {
 
         var transcript = [String]()
         do {
-            try printer.send(payload, to: config.printerName) { line in
+            // /testpage is an interactive diagnostic, so it should answer
+            // quickly rather than sit waiting for a printer to wake up.
+            let wait = request.path == "/testpage" ? 20 : config.waitSeconds
+            try printer.send(payload, to: config.printerName, waitFor: wait) { line in
                 transcript.append(line)
                 if config.verbose { log(line) }
             }

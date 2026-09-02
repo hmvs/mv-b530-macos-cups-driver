@@ -114,45 +114,67 @@ final class Printer: NSObject {
         }
     }
 
+    /// Look for the printer until `timeout` elapses.
+    ///
+    /// These printers sleep and auto-power-off, so a job is very often
+    /// submitted while the printer is unreachable. Waiting here rather than
+    /// failing at once means the user can hit print, then switch the printer
+    /// on, and the page still comes out.
     private func findPeripheral(named wanted: String?,
-                                timeout: TimeInterval) -> CBPeripheral? {
-        var result: CBPeripheral?
+                                timeout: TimeInterval,
+                                log: ((String) -> Void)? = nil) -> CBPeripheral? {
         let deadline = Date().addingTimeInterval(timeout)
+        var announced = false
 
-        queue.sync {
-            found.removeAll()
-            central.scanForPeripherals(withServices: nil, options: nil)
-        }
+        while true {
+            // Restart the scan periodically: a long-running CoreBluetooth
+            // scan can go quiet, and a fresh one also picks up devices that
+            // have only just started advertising.
+            queue.sync {
+                found.removeAll()
+                central.stopScan()
+                central.scanForPeripherals(withServices: nil, options: nil)
+            }
 
-        while Date() < deadline {
-            let match: CBPeripheral? = queue.sync {
-                for (_, entry) in found {
-                    if let wanted, entry.name != wanted { continue }
-                    return entry.peripheral
+            let burstEnd = min(Date().addingTimeInterval(15), deadline)
+            while Date() < burstEnd {
+                let match: CBPeripheral? = queue.sync {
+                    for (_, entry) in found {
+                        if let wanted, entry.name != wanted { continue }
+                        return entry.peripheral
+                    }
+                    return nil
                 }
-                return nil
+                if let match {
+                    queue.sync { central.stopScan() }
+                    return match
+                }
+                Thread.sleep(forTimeInterval: 0.25)
             }
-            if let match {
-                result = match
-                break
+
+            if Date() >= deadline { break }
+            if !announced {
+                announced = true
+                log?("printer not in range yet, waiting up to \(Int(timeout))s")
             }
-            Thread.sleep(forTimeInterval: 0.25)
         }
 
         queue.sync { central.stopScan() }
-        return result
+        return nil
     }
 
     // MARK: - Printing
 
     /// Connect, write the whole stream, and disconnect. Blocks until done.
     func send(_ payload: [UInt8], to wanted: String?,
+              waitFor: TimeInterval = 180,
               log: @escaping (String) -> Void) throws {
         guard waitForPower(timeout: 5) else {
             throw PrinterError.bluetoothUnavailable(stateDescription())
         }
 
-        guard let peripheral = findPeripheral(named: wanted, timeout: 12) else {
+        guard let peripheral = findPeripheral(named: wanted, timeout: waitFor,
+                                              log: log) else {
             throw PrinterError.notFound
         }
         log("found \(peripheral.name ?? "printer") (\(peripheral.identifier))")

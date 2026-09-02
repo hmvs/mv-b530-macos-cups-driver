@@ -155,9 +155,41 @@ Power the printer on — hold the power key for 3 seconds, a flashing green LED
 means it is on and not yet connected — then print to **Anko Inkless A4** from
 any app. A page takes about six seconds to transfer.
 
-If the printer is asleep the job waits rather than failing: the backend returns
-`CUPS_BACKEND_RETRY`, the queue stays enabled, and the job goes through when the
-printer wakes.
+### Printing while the printer is off
+
+You can hit ⌘P first and switch the printer on afterwards. The job waits.
+
+- The **agent** keeps scanning for up to `--wait` seconds (default **180**).
+- If it still cannot find the printer it returns 503, and the **backend** exits
+  `CUPS_BACKEND_RETRY`, so the queue stays enabled and the job stays queued.
+- CUPS then retries on its own schedule: `JobRetryInterval` (default **30 s**)
+  and `JobRetryLimit` (default **5**).
+
+So the default tolerance is roughly `5 × (180 + 30)` ≈ **17 minutes** before
+CUPS gives up on the job. To wait longer, raise the agent's window — that lever
+belongs to this driver, unlike the CUPS globals:
+
+```bash
+mvb530d --wait 900     # ~77 minutes of tolerance
+```
+
+### Does macOS show it as offline?
+
+Yes, once a job has tried. The backend emits `STATE: +offline-report` when the
+printer cannot be reached and `STATE: -offline-report` when a page goes
+through, which is what Printers & Scanners and the print dialog turn into
+"Printer is offline".
+
+The important caveat: CUPS only learns this **when a job runs**. There is no
+background polling, so switching the printer on does not immediately flip the
+UI to online — the status updates on the next job or retry. A queue that has
+never printed shows simply as idle.
+
+If you want a live answer at any moment, ask the agent instead:
+
+```bash
+curl localhost:9101/scan
+```
 
 ### Diagnostics
 
