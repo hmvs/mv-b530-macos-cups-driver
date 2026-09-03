@@ -69,9 +69,10 @@ let startPageCallback: pappl_pr_rstartpage_cb_t = { job, options, device, _ in
     rasterJob.bitsPerPixel = Int(header.cupsBitsPerPixel)
     rasterJob.inverted = header.cupsColorSpace == CUPS_CSPACE_K
 
-    // print-darkness arrives as -100...100; map it onto the printer's 1...5.
-    let requested = Int(options.pointee.print_darkness)
-    rasterJob.darkness = requested == 0 ? 3 : min(5, max(1, (requested + 100) * 5 / 200 + 1))
+    // The darkness set on the printer, adjusted by whatever the job asked for.
+    rasterJob.darkness = Wire.blackeningLevel(
+        configured: Int(options.pointee.darkness_configured),
+        jobDelta: Int(options.pointee.print_darkness))
 
     // Photos want diffusion; text and line art are crisper with a threshold.
     // Everything that is not explicitly a photograph is treated as text,

@@ -162,6 +162,17 @@ public enum Wire {
         }
     }
 
+    /// The printer's 1...5 blackening level for an IPP darkness setting.
+    ///
+    /// IPP splits darkness in two: printer-darkness-configured is the printer's
+    /// own setting, 0 to 100, and a job's print-darkness is a relative
+    /// adjustment either side of it. Both have to be read - taking only the
+    /// job's leaves the printer's own control doing nothing at all.
+    public static func blackeningLevel(configured: Int, jobDelta: Int) -> Int {
+        let combined = min(100, max(0, configured + jobDelta))
+        return min(5, max(1, 1 + combined * 4 / 100))
+    }
+
     /// Build a complete job from one byte per pixel (0 or 1), row-major.
     ///
     /// Returns nil when `pixels` does not hold exactly `width * height`

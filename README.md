@@ -398,6 +398,10 @@ make fixtures
 ## Limitations
 
 - Greyscale only, 200 dpi. It is a thermal printer.
+- Darkness is the printer's own setting plus whatever a job asks for, mapped
+  onto its five blackening levels. IPP's print-quality is ignored: the profile
+  documents one head speed for text and one for photographs, and there is
+  nothing to say what a third would do.
 - Rebuilding the app changes its ad-hoc signature, so macOS asks for Bluetooth
   permission again. Installed once and left alone, it asks once.
 - One job at a time: the Bluetooth link is serialised.

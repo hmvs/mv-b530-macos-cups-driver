@@ -538,6 +538,25 @@ func testHairlineThreshold() {
           "220-grey stays white at 176")
 }
 
+func testBlackeningLevel() {
+    group("blackening level")
+
+    // The printer's own setting has to count: at PAPPL's default of 50 with no
+    // job adjustment, that is the middle of the printer's 1...5.
+    check(Wire.blackeningLevel(configured: 50, jobDelta: 0) == 3,
+          "50 = \(Wire.blackeningLevel(configured: 50, jobDelta: 0)), want 3")
+    check(Wire.blackeningLevel(configured: 0, jobDelta: 0) == 1, "0 is lightest")
+    check(Wire.blackeningLevel(configured: 100, jobDelta: 0) == 5, "100 is darkest")
+
+    // A job adjusts either side of it, and the ends clamp rather than wrap.
+    check(Wire.blackeningLevel(configured: 50, jobDelta: 50) == 5,
+          "turned up = \(Wire.blackeningLevel(configured: 50, jobDelta: 50))")
+    check(Wire.blackeningLevel(configured: 50, jobDelta: -50) == 1,
+          "turned down = \(Wire.blackeningLevel(configured: 50, jobDelta: -50))")
+    check(Wire.blackeningLevel(configured: 100, jobDelta: 100) == 5, "clamps high")
+    check(Wire.blackeningLevel(configured: 0, jobDelta: -100) == 1, "clamps low")
+}
+
 // MARK: - Notifications from the printer
 
 /// Frames a packet the way the printer does, flags = 1.
@@ -614,6 +633,7 @@ testLumaRow()
 testPagePipeline()
 testPacketDecoder()
 testHairlineThreshold()
+testBlackeningLevel()
 
 print("\n\(checksRun) checks, \(checksFailed) failed")
 exit(checksFailed == 0 ? 0 : 1)
