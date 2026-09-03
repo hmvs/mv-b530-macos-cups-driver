@@ -198,6 +198,17 @@ particular printer rather than the first one found:
 MVB530_PRINTER=MV-B530-38AC make install
 ```
 
+The service listens on port 8631. Nothing standard claims it, but if you want
+it for something else:
+
+```bash
+make install IPP_PORT=9631
+```
+
+That writes the port into both the LaunchAgent and the queue's device URI, so
+the two cannot drift. Installing onto a port something else already holds is
+refused rather than leaving a queue pointing at a dead socket.
+
 The first print raises a Bluetooth permission prompt. Approve it once.
 
 ```bash

@@ -15,7 +15,7 @@
         <string>@PREFIX@/libexec/mvb530-printer-app</string>
         <string>server</string>
         <string>-o</string>
-        <string>server-port=8631</string>
+        <string>server-port=@PORT@</string>
         <!-- PAPPL defaults to MULTI_QUEUE | WEB_INTERFACE | WEB_TLS, which is
              a general-purpose print server. This is one Bluetooth printer:
                no-tls          drops the TLS certificate pages, which are

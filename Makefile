@@ -15,6 +15,10 @@
 
 PREFIX      ?= $(HOME)/.local
 QUEUE       ?= Anko_Inkless_A4
+# The IPP/web port. Nothing standard claims 8631, but it is only a default:
+#   make install IPP_PORT=9631
+# writes it into both the LaunchAgent and the queue's device URI, so the two
+# cannot drift apart.
 IPP_PORT    ?= 8631
 AGENTS_DIR  := $(HOME)/Library/LaunchAgents
 LOGDIR      := $(HOME)/Library/Logs
@@ -69,10 +73,22 @@ install: build
 	@if [ "$$(id -u)" -eq 0 ]; then \
 		echo "run this as yourself, not with sudo - nothing needs root" >&2; \
 		exit 1; fi
+	@# Fail early and clearly rather than starting a service that cannot bind,
+	@# leaving a queue pointing at a port nothing answers on. Our own service
+	@# holding the port is fine - that is a reinstall.
+	@holder=$$(lsof -nP -iTCP:$(IPP_PORT) -sTCP:LISTEN -Fc 2>/dev/null \
+		| sed -n 's/^c//p' | grep -v '^mvb530-printer' | head -1); \
+	if [ -n "$$holder" ]; then \
+		echo "port $(IPP_PORT) is already used by: $$holder" >&2; \
+		echo "choose another with IPP_PORT, e.g." >&2; \
+		echo "    make install IPP_PORT=$$((($(IPP_PORT) % 1000) + 9000))" >&2; \
+		exit 1; \
+	fi
 	install -d $(PREFIX)/libexec $(AGENTS_DIR) $(LOGDIR)
 	install -m 0755 $(BINDIR)/mvb530-printer-app $(PREFIX)/libexec/mvb530-printer-app
 	@# launchd expands nothing in a plist, so the prefix is substituted here.
 	sed -e 's|@PREFIX@|$(PREFIX)|g' -e 's|@LOGDIR@|$(LOGDIR)|g' \
+	    -e 's|@PORT@|$(IPP_PORT)|g' \
 		packaging/$(APP_LABEL).plist.in > $(AGENTS_DIR)/$(APP_LABEL).plist
 	@echo "==> starting the printer application"
 	@$(call reload,$(APP_LABEL))
