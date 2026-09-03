@@ -57,20 +57,15 @@ that protocol and exposes it as a standards-compliant IPP printer.
 ## How it works
 
 ```
-⌘P → cupsd → PWG raster over IPP → mvb530-printer-app   (PAPPL, port 8631)
+⌘P → cupsd → PWG raster over IPP → mvb530-printer-app  (PAPPL, port 8631)
                                         ↓ bluetooth:// device scheme
-                                   mvb530d              (CoreBluetooth)
+                                     CoreBluetooth
                                         ↓ BLE GATT
                                      printer
 ```
 
-| Component | Role |
-|---|---|
-| `mvb530-printer-app` | PAPPL IPP service. Raster callbacks → dither → protocol stream, and a `bluetooth://` device scheme. |
-| `mvb530d` | Transport agent. Owns the Bluetooth link. |
-
-Both run as user LaunchAgents. Nothing is installed as root, and no PPD is
-authored here — `lpadmin -m everywhere` builds the queue from the IPP
+One process, running as a user LaunchAgent. Nothing is installed as root, and
+no PPD is authored here — `lpadmin -m everywhere` builds the queue from the IPP
 attributes the printer application advertises.
 
 ### Discovery
@@ -88,31 +83,40 @@ Bluetooth-only printer becomes a shared network printer. The flip side is that
 anyone on your LAN can print to it and reach PAPPL's web interface. If that
 matters, bind it to loopback with `-o server-hostname=localhost`.
 
-### Why there are two processes
+### CoreBluetooth has to start on the main queue, after PAPPL
 
-The intent was one. It cannot be done on macOS.
+This is the one non-obvious constraint in the whole project.
 
-PAPPL must own the main thread: it creates an `NSStatusItem`, and AppKit throws
-*"NSWindow should only be instantiated on the main thread"* otherwise. It never
-pumps a CFRunLoop there. A `CBCentralManager` created in that process stays in
-`.unknown` and delivers no state callback — on the main thread or a worker,
-with or without an explicit dispatch queue, eagerly pre-warmed or lazy, under
-any code-signing identity. All of those were tried.
+PAPPL owns the main thread on macOS — it creates an `NSStatusItem`, and AppKit
+throws *"NSWindow should only be instantiated on the main thread"* otherwise.
+That `NSApplication` also runs the main run loop, which services the main
+dispatch queue.
 
-So the radio lives in `mvb530d`, whose main thread does run a run loop, and the
-device scheme hands each job to it over loopback. That is still a large
-simplification: the previous design had a CUPS filter and backend installed as
-root under `/usr/libexec/cups`, plus a PPD.
+A `CBCentralManager` created **before** `papplMainloop`, or on a worker thread,
+never leaves `.unknown` and delivers no state callback — no prompt, no error,
+no crash. Created on the main queue *after* PAPPL is running, it reaches
+`.poweredOn` normally. So start-up queues the work and lets the run loop pick
+it up:
 
-### Why neither binary is an .app
+```swift
+DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: startTransport)
+```
 
-Each embeds its own `Info.plist` in a `__TEXT,__info_plist` section, so it
-declares `NSBluetoothAlwaysUsageDescription` as a plain signed binary. They
-must be started **by launchd**: a shell-spawned process inherits the terminal's
-TCC identity and is killed on the first CoreBluetooth call, whereas under
-launchd each is its own responsible process. The two also need *different*
-ad-hoc signing identities — two binaries claiming one identity confuses the
-Bluetooth grant for both.
+### Why it is not an .app
+
+The binary embeds its own `Info.plist` in a `__TEXT,__info_plist` section, so
+it declares `NSBluetoothAlwaysUsageDescription` without a bundle. It must be
+started **by launchd**: a shell-spawned process inherits the terminal's TCC
+identity and is killed on the first CoreBluetooth call, whereas under launchd
+it is its own responsible process.
+
+### Status reporting
+
+Presence is cached and refreshed by a background scan, never inline. PAPPL asks
+for device status while rendering the web interface, and a Bluetooth scan takes
+seconds — blocking there truncates the HTTP response and leaves the page
+half-drawn. A job that actually reached the printer updates the cache directly,
+which is cheaper and more authoritative than scanning.
 
 ## Findings
 
@@ -164,7 +168,11 @@ make restart    # after installing a new build
 make uninstall  # remove everything, including the queue
 ```
 
-Logs are at `~/Library/Logs/mvb530.log` and `~/Library/Logs/mvb530d.log`.
+Logs are at `~/Library/Logs/mvb530.log`, and in the unified log:
+
+```bash
+log stream --predicate 'subsystem == "org.hmvs.mvb530"' --info
+```
 
 ## Usage
 
@@ -176,27 +184,33 @@ any app. A page takes about six seconds to transfer.
 
 You can hit ⌘P first and switch the printer on afterwards. The job waits.
 
-- The **agent** keeps scanning for up to `--wait` seconds (default **180**),
+- The driver keeps scanning for up to `MVB530_WAIT` seconds (default **180**),
   restarting the scan every 15 s because a long CoreBluetooth scan goes quiet.
-- If the printer still has not appeared it reports the job failed, and the
-  local queue is created `printer-error-policy=retry-job`, so CUPS retries
-  rather than disabling it.
+- If the printer still has not appeared the job fails, and the local queue is
+  created `printer-error-policy=retry-job`, so CUPS retries rather than
+  disabling it.
 - CUPS retries on its own schedule: `JobRetryInterval` (default **30 s**) and
   `JobRetryLimit` (default **5**).
 
-To wait longer, raise the agent's window in
-`~/Library/LaunchAgents/org.hmvs.mvb530d.plist` — add `--wait 900` to its
-`ProgramArguments` for roughly 77 minutes of tolerance.
+To wait longer, set `MVB530_WAIT` in
+`~/Library/LaunchAgents/org.hmvs.mvb530.plist` — `900` gives roughly 77
+minutes of tolerance.
 
 ### Does macOS show it as offline?
 
-The device scheme reports `PAPPL_PREASON_OFFLINE` when the agent cannot be
-reached, which PAPPL turns into an IPP `printer-state-reasons` value and CUPS
-surfaces in Printers & Scanners.
+Yes. When the printer is not in range the driver publishes
+`printer-state-reasons = offline`, which is what Printers & Scanners and the
+print dialog render:
 
-The caveat is the same as before: state is only refreshed **when a job runs or
-PAPPL polls**, so switching the printer on does not instantly flip the UI. For
-a live answer, ask the agent.
+```bash
+$ ipptool -tv ipp://localhost:8631/ipp/print/anko get-printer-attributes.test \
+    | grep printer-state-reasons
+    printer-state-reasons (keyword) = offline    # printer switched off
+    printer-state-reasons (keyword) = none       # printer in range
+```
+
+Presence is re-checked at most every 45 seconds, so switching the printer on
+takes up to that long to show. It is immediate after any job.
 
 If you want a live answer at any moment, ask the agent instead:
 
@@ -207,12 +221,12 @@ curl localhost:9101/scan
 ### Diagnostics
 
 ```bash
-curl localhost:9101/health              # agent and Bluetooth state
-curl localhost:9101/scan                # nearby supported printers
-curl -X POST localhost:9101/testpage    # test pattern, no CUPS or IPP involved
+make status
+~/.local/libexec/mvb530-printer-app devices   # Bluetooth scan
+~/.local/libexec/mvb530-printer-app jobs
 ipptool -t ipp://localhost:8631/ipp/print/anko get-printer-attributes.test
-dns-sd -B '_ipp._tcp,_universal' local  # what AirPrint would see
-~/.local/libexec/mvb530-printer-app status
+dns-sd -B '_ipp._tcp,_universal' local        # what AirPrint would see
+open http://localhost:8631/                   # PAPPL web interface
 ```
 
 ## Tests
@@ -241,7 +255,9 @@ make fixtures
 ## Limitations
 
 - Greyscale only, 200 dpi. It is a thermal printer.
-- One job at a time; the agent serialises on the Bluetooth link.
+- One job at a time: the Bluetooth link is serialised.
+- About 60 MB resident. Most of that is PAPPL plus OpenSSL, AppKit and the
+  Swift runtime, not this code.
 - The printer must be on before the job reaches it, and cannot print while
   charging.
 - Tested on macOS 26.6, Apple Silicon. AirPrint discovery is verified from the

@@ -19,7 +19,6 @@ IPP_PORT    ?= 8631
 AGENTS_DIR  := $(HOME)/Library/LaunchAgents
 LOGDIR      := $(HOME)/Library/Logs
 APP_LABEL   := org.hmvs.mvb530
-AGENT_LABEL := org.hmvs.mvb530d
 RELEASE     := .build/release
 UNIVERSAL   := .build/universal
 # Which build to install from. Override for a universal release build:
@@ -58,12 +57,10 @@ $(PAPPL_LIB):
 
 build: $(PAPPL_LIB)
 	swift build -c release
-	@# Ad-hoc signatures give each binary a stable identity, which is what
-	@# TCC keys the Bluetooth grant against. They must differ: two binaries
-	@# claiming one identity confuses the grant for both.
-	codesign --force -s - --identifier $(AGENT_LABEL) $(RELEASE)/mvb530d
+	@# An ad-hoc signature gives the binary a stable identity, which is what
+	@# TCC keys the Bluetooth grant against.
 	codesign --force -s - --identifier $(APP_LABEL) $(RELEASE)/mvb530-printer-app
-	@echo "built: mvb530-printer-app, mvb530d"
+	@echo "built: mvb530-printer-app"
 
 test: build
 	./$(RELEASE)/MVBTests tests/fixtures/line_eight.txt
@@ -73,21 +70,14 @@ install: build
 		echo "run this as yourself, not with sudo - nothing needs root" >&2; \
 		exit 1; fi
 	install -d $(PREFIX)/libexec $(AGENTS_DIR) $(LOGDIR)
-	install -m 0755 $(BINDIR)/mvb530d $(PREFIX)/libexec/mvb530d
 	install -m 0755 $(BINDIR)/mvb530-printer-app $(PREFIX)/libexec/mvb530-printer-app
 	@# launchd expands nothing in a plist, so the prefix is substituted here.
 	sed -e 's|@PREFIX@|$(PREFIX)|g' -e 's|@LOGDIR@|$(LOGDIR)|g' \
-		packaging/$(AGENT_LABEL).plist.in > $(AGENTS_DIR)/$(AGENT_LABEL).plist
-	sed -e 's|@PREFIX@|$(PREFIX)|g' -e 's|@LOGDIR@|$(LOGDIR)|g' \
 		packaging/$(APP_LABEL).plist.in > $(AGENTS_DIR)/$(APP_LABEL).plist
-	@echo "==> starting the transport agent"
-	@$(call reload,$(AGENT_LABEL))
-	@# CoreBluetooth takes a few seconds to report a state, and the printer
-	@# app asks the agent for one as soon as it starts.
-	@sleep 8
 	@echo "==> starting the printer application"
 	@$(call reload,$(APP_LABEL))
-	@sleep 6
+	@# CoreBluetooth needs a few seconds to report a state after start-up.
+	@sleep 10
 	@echo "==> adding the printer to the IPP service"
 	@# Discovery needs the radio, so name the printer explicitly. Replace
 	@# MVB530_PRINTER to pin a particular unit.
@@ -108,26 +98,21 @@ install: build
 uninstall:
 	-lpadmin -x $(QUEUE) 2>/dev/null
 	-launchctl bootout $(GUI)/$(APP_LABEL) 2>/dev/null || true
-	-launchctl bootout $(GUI)/$(AGENT_LABEL) 2>/dev/null || true
-	rm -f $(AGENTS_DIR)/$(APP_LABEL).plist $(AGENTS_DIR)/$(AGENT_LABEL).plist
-	rm -f $(PREFIX)/libexec/mvb530d $(PREFIX)/libexec/mvb530-printer-app
+	rm -f $(AGENTS_DIR)/$(APP_LABEL).plist
+	rm -f $(PREFIX)/libexec/mvb530-printer-app
 	@echo "removed."
 
 status:
-	@echo "agent:   $$(curl -sf -m 5 http://127.0.0.1:9101/health | tr '\n' ' ' || echo 'not responding')"
-	@echo "logs:    $(LOGDIR)/mvb530.log, $(LOGDIR)/mvb530d.log"
 	@code=$$(curl -sf -m 5 -o /dev/null -w '%{http_code}' http://localhost:$(IPP_PORT)/ 2>/dev/null); \
-		echo "app:     $${code:-not responding}"
-	@launchctl print $(GUI)/$(AGENT_LABEL) >/dev/null 2>&1 \
-		&& echo "$(AGENT_LABEL): loaded" || echo "$(AGENT_LABEL): not loaded"
+		echo "web/IPP:  $${code:-not responding}  http://localhost:$(IPP_PORT)/"
 	@launchctl print $(GUI)/$(APP_LABEL) >/dev/null 2>&1 \
-		&& echo "$(APP_LABEL): loaded" || echo "$(APP_LABEL): not loaded"
+		&& echo "launchd:  loaded" || echo "launchd:  not loaded"
+	@echo "log:      $(LOGDIR)/mvb530.log"
+	@$(PREFIX)/libexec/mvb530-printer-app status 2>/dev/null || true
 
 restart:
-	launchctl kickstart -k $(GUI)/$(AGENT_LABEL)
-	@sleep 8
 	launchctl kickstart -k $(GUI)/$(APP_LABEL)
-	@sleep 4
+	@sleep 10
 	@$(MAKE) --no-print-directory status
 
 # Universal binaries for distribution. Built per-architecture and lipo'd
@@ -136,12 +121,11 @@ universal: $(PAPPL_LIB)
 	swift build -c release --triple arm64-apple-macosx13.0
 	swift build -c release --triple x86_64-apple-macosx13.0
 	@mkdir -p $(UNIVERSAL)
-	@for bin in mvb530-printer-app mvb530d; do \
+	@for bin in mvb530-printer-app; do \
 		lipo -create -output $(UNIVERSAL)/$$bin \
 			.build/arm64-apple-macosx/release/$$bin \
 			.build/x86_64-apple-macosx/release/$$bin || exit 1; \
 	done
-	codesign --force -s - --identifier $(AGENT_LABEL) $(UNIVERSAL)/mvb530d
 	codesign --force -s - --identifier $(APP_LABEL) $(UNIVERSAL)/mvb530-printer-app
 	@lipo -info $(UNIVERSAL)/*
 

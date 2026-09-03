@@ -1,17 +1,19 @@
 /// mvb530-printer-app - an IPP Everywhere printer application for MV-B530
 /// class thermal printers.
 ///
-/// This replaces the CUPS filter + backend + agent trio. PAPPL runs an IPP
-/// service in the user's login session and advertises it over DNS-SD, so
-/// macOS discovers it as a driverless printer. Three consequences:
+/// One process: an IPP service in the user's login session, advertised over
+/// DNS-SD so macOS discovers it as a driverless printer, talking BLE to the
+/// hardware itself.
 ///
 ///   - No PPD, no /usr/libexec/cups. CUPS 3.x removes PPD and filter support
 ///     entirely, which the previous design was built on.
-///   - No separate agent. The process is already a user agent, so
-///     CoreBluetooth and its TCC grant work here directly.
+///   - No separate transport agent. CoreBluetooth works here, but only if the
+///     central manager is created on the main queue *after* papplMainloop has
+///     started - see startTransport().
 ///   - No root. Nothing is installed into system directories.
 import CPAPPL
 import Foundation
+import MVBTransport
 
 let driverName = "mvb530"
 let driverDescription = "Anko Inkless A4 (MV-B530)"
@@ -21,7 +23,19 @@ let driverCallback: pappl_pr_driver_cb_t = {
     system, name, deviceURI, deviceID, driverData, driverAttrs, _ in
 
     guard let driverData else { return false }
-    _ = (system, name, deviceURI, deviceID)
+    _ = (name, deviceURI, deviceID)
+
+    // The web interface is otherwise all "Not set", which tells a user
+    // nothing about what they are looking at.
+    if let system {
+        papplSystemSetOrganization(system, "mv-b530-macos-cups-driver")
+        papplSystemSetLocation(system, "Bluetooth LE, this Mac")
+        papplSystemSetDNSSDName(system, "Anko Inkless A4")
+        papplSystemSetFooterHTML(system, """
+            Anko Inkless A4 thermal printer (MV-B530 and clones), driven over             Bluetooth LE at 200&nbsp;dpi. The printer must be switched on to             accept a job; jobs submitted while it is asleep wait for it.
+            <a href="https://github.com/hmvs/mv-b530-macos-cups-driver">Source</a>
+            """)
+    }
 
     // PAPPL zeroes the struct for us; only set what differs from the default.
     driverData.pointee.rstartjob_cb = startJobCallback
@@ -106,15 +120,19 @@ let driverCallback: pappl_pr_driver_cb_t = {
     return true
 }
 
+/// Sets the per-printer metadata the web interface and IPP clients show.
+func describePrinter(_ printer: OpaquePointer?) {
+    guard let printer else { return }
+    papplPrinterSetLocation(printer, "Bluetooth LE")
+    papplPrinterSetOrganization(printer, "Anko / Kmart 43618996")
+    papplPrinterSetDNSSDName(printer, "Anko Inkless A4")
+}
+
 /// Identify-Printer: the only thing this hardware can do on demand is feed a
 /// little paper, which is enough to tell two printers apart.
 let identifyCallback: pappl_pr_identify_cb_t = { printer, actions, message in
     _ = (printer, actions, message)
 }
-
-/// Called when PAPPL wants fresh printer state. The device status callback
-/// does the real work; there is nothing to poll here.
-let statusUpdateCallback: pappl_pr_status_cb_t = { _ in true }
 
 /// PAPPL's built-in self-test page, routed through our encoder.
 let testPageCallback: pappl_pr_testpage_cb_t = { printer, buffer, size in
@@ -139,8 +157,19 @@ if let waitEnv = ProcessInfo.processInfo.environment["MVB530_WAIT"],
    let seconds = Double(waitEnv) {
     printerWaitSeconds = seconds
 }
+if let pinned = ProcessInfo.processInfo.environment["MVB530_PRINTER"],
+   !pinned.isEmpty {
+    pinnedPrinterName = pinned
+}
 
 registerBluetoothScheme()
+
+// CoreBluetooth has to be created on the main queue *after* papplMainloop
+// brings up NSApplication, whose run loop services that queue. Created before
+// it, or on a worker thread, the central manager never leaves .unknown and no
+// state callback is ever delivered. papplMainloop blocks, so this is queued
+// now and runs once the run loop is live.
+DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: startTransport)
 
 // PAPPL must own the main thread on macOS: it creates an NSStatusItem, and
 // AppKit throws "NSWindow should only be instantiated on the main thread".
@@ -154,7 +183,14 @@ exit(papplMainloop(
     CommandLine.argc,
     CommandLine.unsafeArgv,
     "1.0",
-    nil,                    // footer HTML
+    """
+    <p>Anko Inkless A4 thermal printer (MV-B530 and clones), driven over \
+    Bluetooth LE. 200&nbsp;dpi greyscale, A4 / A5 / US&nbsp;Letter.<br>
+    The printer must be switched on to accept a job; jobs submitted while it \
+    is asleep wait for it. <br>
+    <a href="https://github.com/hmvs/mv-b530-macos-cups-driver">\
+    github.com/hmvs/mv-b530-macos-cups-driver</a></p>
+    """,                    // footer HTML
     Int32(drivers.count),
     &drivers,
     nil,                    // autoadd callback

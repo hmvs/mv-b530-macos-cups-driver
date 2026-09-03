@@ -5,37 +5,25 @@ let package = Package(
     name: "mvb530",
     platforms: [.macOS(.v13)],
     targets: [
+        // PAPPL is vendored and built by scripts/build-pappl.sh: it is not
+        // packaged for Homebrew.
         .systemLibrary(name: "CPAPPL", path: "Sources/CPAPPL"),
+
         // Non-variadic wrappers: Swift cannot call C variadic functions.
         .target(name: "CPAPPLSupport",
                 cSettings: [.unsafeFlags(["-Ivendor/pappl"])]),
+
         .target(name: "MVBProtocol"),
         .target(name: "MVBImage"),
         .target(name: "MVBTransport",
                 linkerSettings: [.linkedFramework("CoreBluetooth")]),
-        // Print agent. The Info.plist is embedded in the binary so it can
-        // declare NSBluetoothAlwaysUsageDescription without an .app bundle;
-        // without it macOS kills the process the moment it touches Bluetooth.
-        .executableTarget(
-            name: "mvb530d",
-            dependencies: ["MVBProtocol", "MVBTransport"],
-            exclude: ["Info.plist"],
-            linkerSettings: [
-                .linkedFramework("CoreBluetooth"),
-                .unsafeFlags([
-                    "-Xlinker", "-sectcreate",
-                    "-Xlinker", "__TEXT",
-                    "-Xlinker", "__info_plist",
-                    "-Xlinker", "Sources/mvb530d/Info.plist",
-                ]),
-            ]),
 
-        // IPP Everywhere printer application: replaces the filter, the
-        // backend and the agent with one user-session process.
+        // The whole driver: an IPP Everywhere printer application that talks
+        // BLE to the hardware itself.
         .executableTarget(
             name: "mvb530-printer-app",
             dependencies: ["CPAPPL", "CPAPPLSupport", "MVBProtocol",
-                           "MVBImage"],
+                           "MVBImage", "MVBTransport"],
             exclude: ["Info.plist"],
             swiftSettings: [.unsafeFlags(["-Xcc", "-Ivendor/pappl"])],
             linkerSettings: [
