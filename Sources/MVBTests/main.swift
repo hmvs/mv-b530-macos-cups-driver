@@ -298,6 +298,24 @@ func testScaling() {
     check(scaled.first == 0, "first column lost in scaling")
     check(scaled.last == 0, "last column lost in scaling")
 
+    // A4's printable window is exactly the head's width, and must go through
+    // untouched rather than being resampled.
+    var window = [UInt8](repeating: 255, count: 1600)
+    window[0] = 7
+    window[1599] = 9
+    check(Bilevel.fitRow(window[...], to: 1600) == window,
+          "an exactly-sized window must pass through unchanged")
+
+    // A narrower page is centred at its true size, not stretched to fit.
+    let narrow: [UInt8] = [1, 2, 3, 4]
+    let placed = Bilevel.fitRow(narrow[...], to: 8)
+    check(placed == [255, 255, 1, 2, 3, 4, 255, 255],
+          "narrow window centred = \(placed)")
+
+    // Wider than the head still has to be scaled down.
+    check(Bilevel.fitRow(eight[...], to: 4) == [0, 2, 4, 6],
+          "wide window = \(Bilevel.fitRow(eight[...], to: 4))")
+
     check(Bilevel.scaleRow(ArraySlice<UInt8>(), to: 4) == [255, 255, 255, 255],
           "empty source must produce white")
     check(Bilevel.scaleRow(two[...], to: 0).isEmpty,
@@ -493,6 +511,33 @@ func testPagePipeline() {
           + "\(renderWidthUnderTest + options.leftPadding)")
 }
 
+func testHairlineThreshold() {
+    group("hairline threshold")
+
+    // A hairline rule in a PDF renders grey, not black: this is the level
+    // measured on a real form. At the old 128 it vanished entirely.
+    let hairline: [UInt8] = [255, 255, 143, 143, 255, 255]
+    let erased = Bilevel.convert(luma: hairline, width: 6, height: 1,
+                                 dither: .none, threshold: 128)
+    check(!erased.contains(1), "a 143-grey rule is lost at a 128 threshold")
+
+    let kept = Bilevel.convert(luma: hairline, width: 6, height: 1,
+                               dither: .none, threshold: 176)
+    check(kept == [0, 0, 1, 1, 0, 0], "rule printed at 176 = \(kept)")
+
+    // Paper-white must stay white, or every page comes out solid.
+    let blank = [UInt8](repeating: 255, count: 6)
+    check(!Bilevel.convert(luma: blank, width: 6, height: 1,
+                           dither: .none, threshold: 176).contains(1),
+          "white must not be inked at the higher threshold")
+
+    // And a light grey above the threshold still stays off the page.
+    let faint = [UInt8](repeating: 220, count: 6)
+    check(!Bilevel.convert(luma: faint, width: 6, height: 1,
+                           dither: .none, threshold: 176).contains(1),
+          "220-grey stays white at 176")
+}
+
 // MARK: - Notifications from the printer
 
 /// Frames a packet the way the printer does, flags = 1.
@@ -568,6 +613,7 @@ testBilevel()
 testLumaRow()
 testPagePipeline()
 testPacketDecoder()
+testHairlineThreshold()
 
 print("\n\(checksRun) checks, \(checksFailed) failed")
 exit(checksFailed == 0 ? 0 : 1)

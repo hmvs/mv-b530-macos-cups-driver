@@ -69,6 +69,28 @@ public enum Bilevel {
     /// Scale one row horizontally with nearest-neighbour sampling. Cheap and
     /// artefact-free at the near-integer ratios we see, and it keeps hard
     /// edges crisp, which matters more than smoothness on a 1-bit device.
+    /// Places one row of luma on the head's line.
+    ///
+    /// The raster covers the whole sheet, margins included, and names the
+    /// printable window inside it. That window is what the head prints, so it
+    /// is mapped across rather than the whole sheet being squeezed: for A4 the
+    /// window is exactly the head's 1600 dots, and the pixels go straight
+    /// through untouched. A narrower page - A5 on the same paper - is centred
+    /// at its true size instead of being stretched to fit.
+    public static func fitRow(_ window: ArraySlice<UInt8>,
+                              to destinationWidth: Int) -> [UInt8] {
+        guard destinationWidth > 0 else { return [] }
+        guard window.count > destinationWidth else {
+            var out = [UInt8](repeating: 255, count: destinationWidth)
+            let offset = (destinationWidth - window.count) / 2
+            for (index, value) in window.enumerated() {
+                out[offset + index] = value
+            }
+            return out
+        }
+        return scaleRow(window, to: destinationWidth)
+    }
+
     public static func scaleRow(_ source: ArraySlice<UInt8>,
                                 to destinationWidth: Int) -> [UInt8] {
         guard destinationWidth > 0 else { return [] }

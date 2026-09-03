@@ -208,6 +208,15 @@ printed at under half the heat it wants. Content is taken from IPP's
 `print-content-optimize`: anything not explicitly a photograph is treated as
 text, since that is what this printer is nearly always asked for.
 
+**Hairlines are not black.** A half-point rule in a PDF covers part of a pixel
+at 200 dpi, so CUPS renders it grey - and a bilevel threshold at the obvious
+128 erases it. On one real form, 344 of its 879 horizontal rules never reached
+128: the darkest pixel in them was 143, 200, even 226. Text still looked right,
+so the page came out with its borders missing. Text and line art are therefore
+burned at 176, which keeps all but five of those rules for about one per cent
+more of the page burned; past roughly 208 the coverage climbs steeply as light
+greys and glyph haloes fill in.
+
 **The printer has its own flow control.** It sends unprompted notifications
 while a job streams — `51 78 AE 01 01 00 10 70 ff` when its line buffer is
 full, and the same packet with `00` when there is room again. These arrive on

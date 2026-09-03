@@ -11,6 +11,22 @@ import MVBProtocol
 /// x9 profile: 1600 dots across at 200 dpi.
 let renderWidth = 1600
 
+/// How dark a grey has to be before the head burns it, for text and line art.
+///
+/// Not the obvious 128. A hairline border in a PDF is not black: at 200 dpi a
+/// half-point rule covers only part of a pixel, and CUPS renders it grey.
+/// Measured on a real form, 344 of its 879 horizontal rules never reached 128
+/// - the darkest pixel in them was 143, 200, even 226 - so every one of them
+/// was erased. At 176 all but five survive, for about one per cent more of the
+/// page burned. Past roughly 208 that coverage climbs steeply as light greys
+/// and the haloes around glyphs fill in, which costs head energy and makes the
+/// page look heavy, so this sits below it.
+let lineArtThreshold = 176
+
+/// Photographs go through error diffusion instead, where the same level would
+/// simply darken the whole image.
+let photoThreshold = 128
+
 /// Per-job conversion state.
 ///
 /// A single instance is safe: PAPPL runs one job at a time per printer, and
@@ -26,6 +42,9 @@ final class RasterJob {
     /// Text and line art are printed hotter and slower than photographs; the
     /// x9 profile carries a separate set of head settings for each.
     var isText = true
+    /// The printable window inside the sheet-wide raster, in source pixels.
+    var windowStart = 0
+    var windowWidth = 0
     /// Luma, one byte per pixel at the render width. White until written.
     var page = [UInt8]()
 }
@@ -78,11 +97,28 @@ let startPageCallback: pappl_pr_rstartpage_cb_t = { job, options, device, _ in
         return false
     }
 
-    mvb_log_job(job, PAPPL_LOGLEVEL_INFO,
-                "page \(rasterJob.sourceWidth)x\(rasterJob.height) at "
-                + "\(rasterJob.bitsPerPixel) bpp -> \(renderWidth) dots, "
-                + (rasterJob.isText ? "text" : "photo") + ", darkness "
-                + "\(rasterJob.darkness)")
+    deviceLog("page \(rasterJob.sourceWidth)x\(rasterJob.height) at "
+              + "\(rasterJob.bitsPerPixel) bpp, window "
+              + "\(rasterJob.windowStart)+\(rasterJob.windowWidth)"
+              + " -> \(renderWidth) dots, "
+              + (rasterJob.isText ? "text" : "photo")
+              + ", darkness \(rasterJob.darkness)")
+
+    // PAPPL rasterises the whole sheet and marks the printable area with the
+    // PWG image box. Printing that window, rather than the sheet, is what
+    // keeps the page at its true size - and for A4 it is exactly the head's
+    // width, so the pixels need no resampling at all.
+    // cupsInteger is a C array, which Swift imports as a tuple: index 3 is
+    // CUPS_RASTER_PWG_ImageBoxLeft and index 5 is ImageBoxRight.
+    let boxLeft = Int(header.cupsInteger.3)
+    let boxRight = Int(header.cupsInteger.5)
+    if boxLeft >= 0, boxRight > boxLeft, boxRight < rasterJob.sourceWidth {
+        rasterJob.windowStart = boxLeft
+        rasterJob.windowWidth = boxRight - boxLeft + 1
+    } else {
+        rasterJob.windowStart = 0
+        rasterJob.windowWidth = rasterJob.sourceWidth
+    }
 
     rasterJob.page = [UInt8](repeating: 255, count: renderWidth * rasterJob.height)
     _ = device
@@ -99,7 +135,10 @@ let writeLineCallback: pappl_pr_rwriteline_cb_t = { _, _, _, y, line in
                                polarity: rasterJob.inverted ? .blackIsHigh
                                                             : .whiteIsHigh)
 
-    let scaled = Bilevel.scaleRow(luma[...], to: renderWidth)
+    let end = min(rasterJob.windowStart + rasterJob.windowWidth, luma.count)
+    let window = rasterJob.windowStart < end
+        ? luma[rasterJob.windowStart..<end] : luma[...]
+    let scaled = Bilevel.fitRow(window, to: renderWidth)
     let start = Int(y) * renderWidth
     rasterJob.page.replaceSubrange(start..<(start + renderWidth), with: scaled)
     return true
@@ -110,7 +149,9 @@ let endPageCallback: pappl_pr_rendpage_cb_t = { job, _, device, _ in
 
     let bits = Bilevel.convert(luma: rasterJob.page, width: renderWidth,
                                height: rasterJob.height,
-                               dither: rasterJob.dither, threshold: 128)
+                               dither: rasterJob.dither,
+                               threshold: rasterJob.isText ? configuredThreshold
+                                                           : photoThreshold)
     guard !bits.isEmpty else {
         mvb_log_job(job, PAPPL_LOGLEVEL_ERROR, "could not dither the page")
         return false

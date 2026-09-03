@@ -160,6 +160,11 @@ if let pinned = ProcessInfo.processInfo.environment["MVB530_PRINTER"]
     pinnedPrinterName = pinned
 }
 
+/// How dark a grey has to be before it is printed, for text and line art.
+/// Raise it to catch fainter rules, lower it if pages come out too heavy.
+let configuredThreshold = configuredValue("mvb530-threshold")
+    .flatMap(Int.init).map { min(254, max(1, $0)) } ?? lineArtThreshold
+
 registerBluetoothScheme()
 
 /// Port the bundled app listens on.
