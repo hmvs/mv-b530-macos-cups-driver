@@ -13,19 +13,20 @@ let renderWidth = 1600
 
 /// How dark a grey has to be before the head burns it, for text and line art.
 ///
-/// Not the obvious 128, and not because of antialiasing: rendered with
-/// antialiasing turned off, the rules on a real form are still grey, all of
-/// them at exactly 143. The document draws its borders in grey rather than
-/// black, as most modern forms do. A threshold at 128 says anything lighter
-/// than half black does not exist, so all 344 of that page's grey rules were
-/// deleted while the text between them printed perfectly.
+/// Not the obvious 128, and the reason is not antialiasing: rendered with
+/// antialiasing off, the rules a form draws are still grey. Documents draw
+/// their borders in grey rather than black, so a threshold at half black
+/// deletes them - the text between them prints perfectly and the page arrives
+/// with no borders.
 ///
-/// The band that prints them is anything above 143 and below the antialiased
-/// edges those same lines leave behind, which measured 196 and lighter. 176
-/// sits in the middle of it, and costs about one per cent more of the page
-/// burned. Higher is not free: past roughly 208 the coverage climbs steeply as
-/// the haloes around glyphs fill in, which spends head energy and makes the
-/// page look heavier than it was drawn.
+/// Measured over 22 pages of real documents, 16528 horizontal rules in all,
+/// the greys they are drawn in cluster at 0, 8-10, 33-36, 110, 129, 145 and
+/// 160. Two of the largest populations sit just above 128, which is why a
+/// threshold there printed only 71.8% of them. 176 clears the highest common
+/// one and prints 99.5%; from there to 240 the curve is flat, so a higher
+/// level finds no more lines and only burns more of the page - and past about
+/// 208 the haloes around glyphs start filling in, which spends head energy
+/// and makes the page look heavier than it was drawn.
 let lineArtThreshold = 176
 
 /// Photographs go through error diffusion instead, where the same level would

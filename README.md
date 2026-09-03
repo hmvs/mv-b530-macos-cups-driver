@@ -209,21 +209,30 @@ printed at under half the heat it wants. Content is taken from IPP's
 text, since that is what this printer is nearly always asked for.
 
 **Form rules are drawn in grey, not black.** A bilevel threshold at the
-obvious 128 deletes them: on one real form, 344 of its 879 horizontal rules
-never reached it, and the page printed with its borders missing while the text
-between them came out perfectly. This is not antialiasing — rendered with
-antialiasing off, those rules are still grey, every one of them at exactly 143.
-The document draws its borders that way, as most modern forms do.
+obvious 128 deletes them: on one form, 344 of its 879 horizontal rules never
+reached it, so the page printed with its borders missing while the text between
+them came out perfectly. This is not antialiasing — rendered with antialiasing
+off those rules are still grey. Documents simply draw their borders that way.
 
-So the threshold has to sit above the grey a designer would call a line, and
-below the antialiased edges those lines leave behind, which measure 196 and
-lighter. Text and line art are burned at 176, in the middle of that band: it
-takes page one of that form from 535 rules printed to 874, and page two from
-847 to 1064, for about one per cent more of the page burned. Higher is not
-free — past roughly 208 the coverage climbs steeply as the haloes around
-glyphs fill in, spending head energy and making the page look heavier than it
-was drawn. Photographs are unaffected: they go through error diffusion, where
-the same level would simply darken the picture.
+Where the threshold belongs was measured rather than guessed, over 22 pages of
+real documents holding 16528 horizontal rules between them. The greys they are
+drawn in cluster at 0, 8–10, 33–36, 110, 129, 145 and 160:
+
+| threshold | rules printed |
+|---|---|
+| 128 | 71.8% |
+| 144 | 84.3% |
+| 160 | 89.1% |
+| **176** | **99.5%** |
+| 192–224 | 99.9% |
+
+Two of the largest populations sit just above 128, which is what a 50%
+threshold throws away. Text and line art are burned at 176: it clears the
+highest common design grey, and from there the curve is flat, so a higher
+level finds no more lines and only burns more of the page — past about 208 the
+haloes around glyphs fill in, spending head energy and making the page look
+heavier than it was drawn. Photographs are unaffected; they go through error
+diffusion, where the same level would simply darken the picture.
 
 **The printer has its own flow control.** It sends unprompted notifications
 while a job streams — `51 78 AE 01 01 00 10 70 ff` when its line buffer is
