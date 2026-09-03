@@ -45,6 +45,53 @@ a standards-compliant IPP printer.
 
 ## Install
 
+Download the app, drag it to Applications, open it. No terminal, no
+installer, nothing to run as root.
+
+**1. Download it** from the
+[Releases page](https://github.com/hmvs/mv-b530-macos-cups-driver/releases).
+There are two, and you want the one matching your Mac — click the  menu →
+**About This Mac**:
+
+| It says | Download |
+|---|---|
+| Apple M1, M2, M3, M4… | `Anko-Inkless-A4-arm64.zip` |
+| Intel | `Anko-Inkless-A4-x86_64.zip` |
+
+**2. Unzip it** — double-click the download — and drag **Anko Inkless A4** into
+your **Applications** folder.
+
+**3. Open it.** The first time, macOS says it *"cannot verify the developer"*
+and refuses. This is expected: verifying costs an annual fee to Apple, and this
+is a free project. To open it anyway:
+
+> Go to  → **System Settings** → **Privacy & Security**, scroll down to
+> **Security**, and click **Open Anyway** next to Anko Inkless A4. Confirm with
+> your password or Touch ID.
+
+**4. Nothing seems to happen** — that is right. It has no window: look for its
+icon in the menu bar at the top right of the screen. It starts by itself
+whenever you log in from now on.
+
+**5. Turn the printer on** — hold the power key for three seconds until the
+green light flashes.
+
+**6. Print** from any app, choosing **Anko Inkless A4**. The first time, macOS
+asks whether the app may use Bluetooth. Say **Allow** — that is how it reaches
+the printer, and it will not work otherwise.
+
+### If something goes wrong
+
+| | |
+|---|---|
+| Nothing prints | Is the printer switched on, and not plugged into the charger? It cannot print while charging. |
+| It printed nothing, or a blank page | Paper goes in with the shiny side up. |
+| Lines or borders are missing, or the page looks too light | Click the menu bar icon, open the web page it offers, and try **Print quality** → *Shade everything*. |
+| It says "offline" but the printer is on | It rechecks every 45 seconds — wait a moment. |
+| You said no to Bluetooth by mistake | **System Settings** → **Privacy & Security** → **Bluetooth**, and switch **Anko Inkless A4** on. |
+
+## Build it yourself
+
 Needs macOS 13+, the Command Line Tools, and OpenSSL (`brew install openssl@3`)
 — PAPPL requires TLS. No Xcode.
 
@@ -55,6 +102,7 @@ make test      # builds PAPPL, then runs the test suite
 make app       # builds "Anko Inkless A4.app"
 ```
 
+This produces the same app as the download, ad-hoc signed for this machine.
 Drag `.build/Anko Inkless A4.app` into **Applications** and open it. On first
 launch it registers in **System Settings → General → Login Items**, creates the
 printer, and creates the CUPS queue **Anko_Inkless_A4** as the default.
@@ -195,6 +243,10 @@ make fixtures
 - Tested on macOS 26.6, Apple Silicon. AirPrint discovery is verified from the
   DNS-SD records; printing from iOS and Android is untested.
 - PAPPL is vendored and built from source: it is not packaged for Homebrew.
+- The released apps are ad-hoc signed, not notarised, so macOS asks the person
+  downloading one to allow it by hand. Notarising needs a paid Apple developer
+  account. OpenSSL is carried inside the bundle, so Homebrew is not needed to
+  run it — only to build it.
 
 ## Credits
 

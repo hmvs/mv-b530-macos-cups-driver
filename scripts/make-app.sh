@@ -72,6 +72,43 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# OpenSSL comes from Homebrew, which a machine that only downloads this app
+# will not have - and on an Intel Mac it lives somewhere else again. Both
+# libraries are copied in and the load paths rewritten to point inside the
+# bundle, so the app carries what it needs.
+mkdir -p "$OUT/Contents/Frameworks"
+BINARY="$OUT/Contents/MacOS/Anko Inkless A4"
+
+for lib in libssl.3.dylib libcrypto.3.dylib; do
+    source_path=$(otool -L "$BINARY" | awk -v lib="$lib" '$1 ~ lib {print $1; exit}')
+    [ -n "$source_path" ] || continue
+
+    cp "$source_path" "$OUT/Contents/Frameworks/$lib"
+    chmod u+w "$OUT/Contents/Frameworks/$lib"
+    install_name_tool -id "@executable_path/../Frameworks/$lib" \
+        "$OUT/Contents/Frameworks/$lib"
+    install_name_tool -change "$source_path" \
+        "@executable_path/../Frameworks/$lib" "$BINARY"
+done
+
+# libssl loads libcrypto by the same absolute path, so that needs rewriting too.
+if [ -f "$OUT/Contents/Frameworks/libssl.3.dylib" ]; then
+    crypto=$(otool -L "$OUT/Contents/Frameworks/libssl.3.dylib" \
+        | awk '$1 ~ /libcrypto.3.dylib/ && $1 !~ /@executable_path/ {print $1; exit}')
+    if [ -n "$crypto" ]; then
+        install_name_tool -change "$crypto" \
+            "@executable_path/../Frameworks/libcrypto.3.dylib" \
+            "$OUT/Contents/Frameworks/libssl.3.dylib"
+    fi
+fi
+
+# Rewriting a Mach-O invalidates its signature, so the libraries are signed
+# before the bundle that contains them.
+for lib in "$OUT/Contents/Frameworks/"*.dylib; do
+    [ -e "$lib" ] || continue
+    codesign --force --sign - "$lib" >/dev/null 2>&1
+done
+
 # The identity TCC keys the Bluetooth grant against. A Developer ID signature
 # would go here for distribution; ad-hoc is enough to run locally.
 codesign --force --sign - --identifier "$BUNDLE_ID" "$OUT" >/dev/null 2>&1
