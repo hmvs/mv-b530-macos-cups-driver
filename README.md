@@ -234,6 +234,15 @@ haloes around glyphs fill in, spending head energy and making the page look
 heavier than it was drawn. Photographs are unaffected; they go through error
 diffusion, where the same level would simply darken the picture.
 
+The vendor's own tooling reaches the same conclusion from the other
+direction: it error-diffuses everything by default, so a grey line prints as a
+pattern of dots rather than being deleted, and its threshold mode is adaptive —
+the page mean less 13, which on a white document lands near 220. Neither of its
+paths uses 128. Measured on the form above, diffusing everything prints 854 of
+page one's 879 rules against 874 for the threshold, the difference being that
+diffused rules read as grey where thresholded ones are solid. Set
+`mvb530-dither=diffuse` for that behaviour.
+
 **The printer has its own flow control.** It sends unprompted notifications
 while a job streams — `51 78 AE 01 01 00 10 70 ff` when its line buffer is
 full, and the same packet with `00` when there is room again. These arrive on

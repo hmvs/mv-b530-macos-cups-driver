@@ -78,8 +78,12 @@ let startPageCallback: pappl_pr_rstartpage_cb_t = { job, options, device, _ in
     // Everything that is not explicitly a photograph is treated as text,
     // because that is what this printer is nearly always asked for.
     let photo = options.pointee.print_content_optimize == PAPPL_CONTENT_PHOTO.rawValue
-    rasterJob.dither = photo ? .atkinson : .none
     rasterJob.isText = !photo
+    switch configuredDither {
+    case "diffuse", "atkinson": rasterJob.dither = .atkinson
+    case "threshold", "none":   rasterJob.dither = .none
+    default:                    rasterJob.dither = photo ? .atkinson : .none
+    }
 
     guard rasterJob.sourceWidth > 0, rasterJob.height > 0,
           rasterJob.bytesPerLine > 0 else {
@@ -109,6 +113,7 @@ let startPageCallback: pappl_pr_rstartpage_cb_t = { job, options, device, _ in
               + "\(rasterJob.windowStart)+\(rasterJob.windowWidth)"
               + " -> \(renderWidth) dots, "
               + (rasterJob.isText ? "text" : "photo")
+              + (rasterJob.dither == .atkinson ? ", diffused" : ", thresholded")
               + ", darkness \(rasterJob.darkness)")
 
     // PAPPL rasterises the whole sheet and marks the printable area with the

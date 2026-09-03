@@ -165,6 +165,18 @@ if let pinned = ProcessInfo.processInfo.environment["MVB530_PRINTER"]
 let configuredThreshold = configuredValue("mvb530-threshold")
     .flatMap(Int.init).map { min(254, max(1, $0)) } ?? lineArtThreshold
 
+/// How grey is turned into the black or white the head can actually print.
+///
+///   auto       threshold text and line art, diffuse photographs (default)
+///   diffuse    diffuse everything, so a grey line prints as a grey line
+///   threshold  threshold everything
+///
+/// The choice is what happens to a grey: thresholding prints it solid black or
+/// not at all, while diffusing renders it as a pattern of dots that reads as
+/// grey. Solid is crisper for a form's rules; diffused is truer to how the
+/// page was drawn, and is what the vendor's own tooling does by default.
+let configuredDither = configuredValue("mvb530-dither")?.lowercased() ?? "auto"
+
 registerBluetoothScheme()
 
 /// Port the bundled app listens on.
