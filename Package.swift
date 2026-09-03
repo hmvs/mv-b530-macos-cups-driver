@@ -16,6 +16,9 @@ let package = Package(
         .target(name: "MVBProtocol"),
         .target(name: "MVBImage"),
         .target(name: "MVBTransport",
+                // For the packet decoder: the printer's flow-control
+                // notifications arrive in the same framing it is sent.
+                dependencies: ["MVBProtocol"],
                 linkerSettings: [.linkedFramework("CoreBluetooth")]),
 
         // The whole driver: an IPP Everywhere printer application that talks

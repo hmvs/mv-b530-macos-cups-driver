@@ -6,6 +6,7 @@
 /// BLE is the only route that works.
 import CoreBluetooth
 import Foundation
+import MVBProtocol
 
 /// Bluetooth names of MV-B530 and its documented clones.
 public let supportedNamePrefixes = ["MV-B530", "GL-VS9", "QDID", "X9"]
@@ -68,6 +69,19 @@ public final class Printer: NSObject {
 
     private var connectContinuation: ((Result<Void, PrinterError>) -> Void)?
     private var readyContinuation: (() -> Void)?
+
+    /// The printer's own flow control, which is not the same thing as the
+    /// radio being ready: it reports when its line buffer is full, and keeping
+    /// on sending through that loses the lines it cannot hold.
+    private let flowLock = NSCondition()
+    private var flowPaused = false
+    private var flowPauses = 0
+
+    /// Set for the duration of a job so the delegate can report what the
+    /// printer says back. The transport has no logger of its own.
+    private var jobLog: ((String) -> Void)?
+    private var notificationsSeen = 0
+    private var decoder = PacketDecoder()
 
     public override init() {
         super.init()
@@ -188,6 +202,11 @@ public final class Printer: NSObject {
             throw PrinterError.bluetoothUnavailable(stateDescription())
         }
 
+        queue.sync {
+            jobLog = log
+            notificationsSeen = 0
+        }
+
         guard let peripheral = findPeripheral(named: wanted, timeout: waitFor,
                                               log: log) else {
             throw PrinterError.notFound
@@ -218,8 +237,10 @@ public final class Printer: NSObject {
             let end = min(offset + chunkSize, payload.count)
             let chunk = Data(payload[offset..<end])
 
-            // Flow control: wait for the peripheral to drain rather than
-            // guessing with a fixed delay, which either stalls or overruns.
+            // Two separate things have to be ready: the printer's line buffer,
+            // which it reports itself, and the radio, which CoreBluetooth
+            // reports. Guessing either with a fixed delay stalls or overruns.
+            waitWhileFlowPaused(timeout: 30)
             try waitUntilReady(peripheral, timeout: 10)
             queue.sync {
                 peripheral.writeValue(chunk, for: characteristic,
@@ -227,20 +248,34 @@ public final class Printer: NSObject {
             }
             offset = end
             chunks += 1
+
+            // The profile asks for a short gap between chunks. The radio's own
+            // readiness signal does not account for the printer's line buffer,
+            // and this is what the vendor's stack leaves between writes.
+            Thread.sleep(forTimeInterval: 0.004)
         }
 
-        log("wrote \(payload.count) bytes in \(chunks) chunks")
-        // Let the last chunks reach the printer before tearing the link down.
-        Thread.sleep(forTimeInterval: 0.6)
+        let pauses = { flowLock.lock(); defer { flowLock.unlock() }; return flowPauses }()
+        log("wrote \(payload.count) bytes in \(chunks) chunks"
+            + " (printer asked us to wait \(pauses) times)")
+        // Let the printer finish with what it has before the link is torn
+        // down: the last lines are lost if it is cut off mid-page.
+        Thread.sleep(forTimeInterval: 3)
     }
 
     private func connect(_ peripheral: CBPeripheral) throws {
         let semaphore = DispatchSemaphore(value: 0)
         var outcome: Result<Void, PrinterError> = .failure(.timedOut("connecting"))
 
+        flowLock.lock()
+        flowPaused = false
+        flowPauses = 0
+        flowLock.unlock()
+
         queue.sync {
             target = peripheral
             writeCharacteristic = nil
+            decoder = PacketDecoder()
             peripheral.delegate = self
             connectContinuation = { result in
                 outcome = result
@@ -254,6 +289,19 @@ public final class Printer: NSObject {
             throw PrinterError.timedOut("connecting")
         }
         try outcome.get()
+    }
+
+    /// Blocks while the printer says its buffer is full.
+    ///
+    /// The timeout is a backstop: if the resume never arrives, sending on is
+    /// better than hanging the job for ever.
+    private func waitWhileFlowPaused(timeout: TimeInterval) {
+        flowLock.lock()
+        defer { flowLock.unlock() }
+        let deadline = Date().addingTimeInterval(timeout)
+        while flowPaused && Date() < deadline {
+            flowLock.wait(until: deadline)
+        }
     }
 
     private func waitUntilReady(_ peripheral: CBPeripheral,
@@ -352,7 +400,9 @@ extension Printer: CBPeripheralDelegate {
             continuation?(.failure(.noWriteCharacteristic))
             return
         }
-        peripheral.discoverCharacteristics([uartWriteCharacteristic], for: service)
+        // All of them, not just the write characteristic: the notifications
+        // that carry flow control come back on a separate one.
+        peripheral.discoverCharacteristics(nil, for: service)
     }
 
     public func peripheral(_ peripheral: CBPeripheral,
@@ -372,7 +422,36 @@ extension Printer: CBPeripheralDelegate {
             return
         }
         writeCharacteristic = characteristic
+
+        var subscribed = [String]()
+        for candidate in service.characteristics ?? []
+        where candidate.properties.contains(.notify)
+            || candidate.properties.contains(.indicate) {
+            peripheral.setNotifyValue(true, for: candidate)
+            subscribed.append(candidate.uuid.uuidString)
+        }
+        jobLog?("subscribed to \(subscribed.count): \(subscribed.joined(separator: ", "))")
+
         continuation?(.success(()))
+    }
+
+    public func peripheral(_ peripheral: CBPeripheral,
+                           didUpdateValueFor characteristic: CBCharacteristic,
+                           error: Error?) {
+        guard error == nil, let data = characteristic.value else { return }
+        notificationsSeen += 1
+        if notificationsSeen <= 8 {
+            jobLog?("printer said: "
+                    + data.map { String(format: "%02x", $0) }.joined())
+        }
+        for packet in decoder.feed(Array(data)) {
+            guard let paused = FlowControl.state(of: packet) else { continue }
+            flowLock.lock()
+            flowPaused = paused
+            if paused { flowPauses += 1 }
+            flowLock.broadcast()
+            flowLock.unlock()
+        }
     }
 
     public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {

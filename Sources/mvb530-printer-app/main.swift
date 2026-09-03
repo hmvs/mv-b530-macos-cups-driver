@@ -46,6 +46,11 @@ let driverCallback: pappl_pr_driver_cb_t = {
     driverData.pointee.rendpage_cb = endPageCallback
     driverData.pointee.rendjob_cb = endJobCallback
     driverData.pointee.testpage_cb = testPageCallback
+    driverData.pointee.printfile_cb = printFileCallback
+    // Names the format a job file may be handed to printfile_cb in. Without
+    // it PAPPL aborts file jobs - the test page among them - for want of a
+    // filter, even though it is the format this printer already advertises.
+    driverData.pointee.format = UnsafePointer(strdup("image/pwg-raster"))
     driverData.pointee.identify_cb = identifyCallback
     driverData.pointee.status_cb = statusUpdateCallback
 
@@ -133,16 +138,6 @@ func describePrinter(_ printer: OpaquePointer?) {
 /// little paper, which is enough to tell two printers apart.
 let identifyCallback: pappl_pr_identify_cb_t = { printer, actions, message in
     _ = (printer, actions, message)
-}
-
-/// PAPPL's built-in self-test page, routed through our encoder.
-let testPageCallback: pappl_pr_testpage_cb_t = { printer, buffer, size in
-    guard let buffer, size > 0 else { return nil }
-    // Returning nil with no filename tells PAPPL there is no test file; the
-    // printer's own pattern is available via `mvb530-printer-app testpage`.
-    _ = printer
-    buffer[0] = 0
-    return nil
 }
 
 var drivers = [

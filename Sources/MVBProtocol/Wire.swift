@@ -34,8 +34,10 @@ public struct JobOptions: Sendable {
     public var a4SheetMaxHeight: Int = 2460
     public var postPrintFeedCount: Int = 2
     public var devDPI: Int = 200
-    /// White pixels prepended to every row.
-    public var leftPadding: Int = 0
+    /// White pixels prepended to every row. The x9 head is 1632 dots wide and
+    /// the printable area starts 32 in, so a page rendered at 1600 has to be
+    /// shifted by that much or it prints 4 mm left of where it should.
+    public var leftPadding: Int = 32
     public var endsMediaPage: Bool = true
 
     /// Defaults matching the x9 profile, which is what MV-B530 resolves to.

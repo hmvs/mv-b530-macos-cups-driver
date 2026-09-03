@@ -274,8 +274,16 @@ func testScaling() {
           "equal widths must copy unchanged")
 
     let eight: [UInt8] = [0, 1, 2, 3, 4, 5, 6, 7]
-    check(Bilevel.scaleRow(eight[...], to: 4) == [1, 3, 5, 7],
+    // Downscaling keeps the darkest of each pair, so no stroke is dropped.
+    check(Bilevel.scaleRow(eight[...], to: 4) == [0, 2, 4, 6],
           "downscale = \(Bilevel.scaleRow(eight[...], to: 4))")
+
+    // The case that matters: a one-pixel black stroke must survive a scale
+    // that has fewer destination pixels than source ones.
+    var stroke = [UInt8](repeating: 255, count: 1654)
+    stroke[800] = 0
+    check(Bilevel.scaleRow(stroke[...], to: 1600).contains(0),
+          "a single dark column must not be scaled away")
 
     let two: [UInt8] = [100, 200]
     check(Bilevel.scaleRow(two[...], to: 4) == [100, 100, 200, 200],
@@ -297,7 +305,7 @@ func testScaling() {
 
     // Scaling must work on a slice that does not start at zero.
     let slice = eight[4...]
-    check(Bilevel.scaleRow(slice, to: 2) == [5, 7],
+    check(Bilevel.scaleRow(slice, to: 2) == [4, 6],
           "slice with non-zero start = \(Bilevel.scaleRow(slice, to: 2))")
 }
 
@@ -479,8 +487,67 @@ func testPagePipeline() {
     check(stats.counts[0xA3] == 1, "one device-state packet")
     check(stats.counts[0xBF] + stats.counts[0xA2] == height,
           "row packets = \(stats.counts[0xBF] + stats.counts[0xA2]), want \(height)")
-    check(stats.firstRowPixels == renderWidthUnderTest,
-          "first row covers \(stats.firstRowPixels) px")
+    // Rows go out padded to the head's full width, not the render width.
+    check(stats.firstRowPixels == renderWidthUnderTest + options.leftPadding,
+          "first row covers \(stats.firstRowPixels) px, want "
+          + "\(renderWidthUnderTest + options.leftPadding)")
+}
+
+// MARK: - Notifications from the printer
+
+/// Frames a packet the way the printer does, flags = 1.
+func printerPacket(opcode: UInt8, payload: [UInt8]) -> [UInt8] {
+    [0x51, 0x78, opcode, 1,
+     UInt8(payload.count & 0xFF), UInt8((payload.count >> 8) & 0xFF)]
+        + payload + [Wire.crc8(payload), 0xFF]
+}
+
+func testPacketDecoder() {
+    group("packet decoder")
+
+    var decoder = PacketDecoder()
+    let pause = printerPacket(opcode: 0xAE, payload: [0x10])
+    let resume = printerPacket(opcode: 0xAE, payload: [0x00])
+
+    let one = decoder.feed(pause)
+    check(one.count == 1, "one packet from one frame, got \(one.count)")
+    check(one.first.map(FlowControl.state) == true, "0x10 means pause")
+
+    // BLE coalesces notifications, so several can arrive in one callback.
+    let both = decoder.feed(resume + pause)
+    check(both.count == 2, "two coalesced packets, got \(both.count)")
+    check(both.first.map(FlowControl.state) == false, "0x00 means resume")
+    check(both.last.map(FlowControl.state) == true, "second is the pause")
+
+    // And it fragments them just as readily: nothing until the last byte.
+    var fragmented = PacketDecoder()
+    check(fragmented.feed(pause.dropLast(3)).isEmpty, "no packet from a fragment")
+    check(fragmented.feed(pause.suffix(3)).count == 1, "packet completed by the rest")
+
+    // A byte-at-a-time delivery must still yield exactly one packet.
+    var drip = PacketDecoder()
+    var dripped = 0
+    for byte in pause { dripped += drip.feed([byte]).count }
+    check(dripped == 1, "one packet delivered a byte at a time, got \(dripped)")
+
+    // Rubbish before a packet is skipped rather than swallowing it.
+    var noisy = PacketDecoder()
+    let withNoise = noisy.feed([0x00, 0x51, 0x99, 0xFF] + pause)
+    check(withNoise.count == 1, "packet found after noise, got \(withNoise.count)")
+
+    // A corrupt CRC must not be accepted as flow control.
+    var corrupt = PacketDecoder()
+    var bad = pause
+    bad[bad.count - 2] ^= 0xFF
+    check(corrupt.feed(bad).isEmpty, "packet with a bad CRC is rejected")
+
+    // Only the printer's own opcode and direction mean anything.
+    var others = PacketDecoder()
+    let other = others.feed(printerPacket(opcode: 0xA3, payload: [0x10]))
+    check(other.count == 1, "the 0xA3 packet still decodes")
+    check(other.first.flatMap(FlowControl.state) == nil, "0xA3 is not flow control")
+    let outbound = DecodedPacket(opcode: 0xAE, flags: 0, payload: [0x10])
+    check(FlowControl.state(of: outbound) == nil, "our own packets are not flow control")
 }
 
 // MARK: - Entry point
@@ -500,6 +567,7 @@ testScaling()
 testBilevel()
 testLumaRow()
 testPagePipeline()
+testPacketDecoder()
 
 print("\n\(checksRun) checks, \(checksFailed) failed")
 exit(checksFailed == 0 ? 0 : 1)

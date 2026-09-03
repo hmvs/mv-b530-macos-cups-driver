@@ -82,6 +82,29 @@ public enum Bilevel {
 
         let base = source.startIndex
         var out = [UInt8](repeating: 0, count: destinationWidth)
+
+        if destinationWidth < sourceWidth {
+            // Downscaling keeps the darkest pixel of the span each destination
+            // pixel covers, rather than sampling one of them. The output is
+            // bilevel, and a sample that happens to land between the stems of a
+            // letter deletes them: at A4's 1654 to 1600 that is 54 columns of
+            // text thrown away. Taking the darkest cannot lose a stroke, and at
+            // this ratio - barely more than one source pixel per destination
+            // one - it does not thicken anything either.
+            for x in 0..<destinationWidth {
+                let start = (x * sourceWidth) / destinationWidth
+                var end = ((x + 1) * sourceWidth) / destinationWidth
+                if end <= start { end = start + 1 }
+
+                var darkest = source[base + start]
+                for sx in (start + 1)..<min(end, sourceWidth) {
+                    darkest = min(darkest, source[base + sx])
+                }
+                out[x] = darkest
+            }
+            return out
+        }
+
         for x in 0..<destinationWidth {
             // Sample the centre of the destination pixel. Sampling the left
             // edge instead shifts the image half a pixel, which shows up as a
