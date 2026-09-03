@@ -146,6 +146,7 @@ let statusUpdateCallback: pappl_pr_status_cb_t = { printer in
     let system = papplPrinterGetSystem(printer)
     registerSharingPage(system)
     registerAboutPage(system)
+    registerQualityPage(system)
     let offline = PAPPL_PREASON_OFFLINE.rawValue
     if presence.current() {
         papplPrinterSetReasons(printer, PAPPL_PREASON_NONE.rawValue, offline)

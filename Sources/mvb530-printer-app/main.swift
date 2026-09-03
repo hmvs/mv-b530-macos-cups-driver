@@ -162,7 +162,7 @@ if let pinned = ProcessInfo.processInfo.environment["MVB530_PRINTER"]
 
 /// How dark a grey has to be before it is printed, for text and line art.
 /// Raise it to catch fainter rules, lower it if pages come out too heavy.
-let configuredThreshold = configuredValue("mvb530-threshold")
+var configuredThreshold = configuredValue("mvb530-threshold")
     .flatMap(Int.init).map { min(254, max(1, $0)) } ?? lineArtThreshold
 
 /// How grey is turned into the black or white the head can actually print.
@@ -175,7 +175,21 @@ let configuredThreshold = configuredValue("mvb530-threshold")
 /// not at all, while diffusing renders it as a pattern of dots that reads as
 /// grey. Solid is crisper for a form's rules; diffused is truer to how the
 /// page was drawn, and is what the vendor's own tooling does by default.
-let configuredDither = configuredValue("mvb530-dither")?.lowercased() ?? "auto"
+var configuredDither = configuredValue("mvb530-dither")?.lowercased() ?? "auto"
+
+/// Records one setting in the config file, leaving the rest of it alone.
+func setConfiguredValue(_ key: String, _ value: String) {
+    guard let url = configurationURL() else { return }
+    var lines = configurationLines().filter { !$0.hasPrefix("\(key)=") }
+    lines.append("\(key)=\(value)")
+
+    let header = """
+        # Read by Anko Inkless A4 at start-up. Settings you add are kept;
+        # server-port, server-options and listen-hostname are rewritten.
+        """
+    try? ([header] + lines).joined(separator: "\n").appending("\n")
+        .write(to: url, atomically: true, encoding: .utf8)
+}
 
 registerBluetoothScheme()
 
