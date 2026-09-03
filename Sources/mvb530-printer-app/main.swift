@@ -171,7 +171,12 @@ registerBluetoothScheme()
 // authentication, so anyone there could print to it or change its settings.
 // Private is therefore the default, and sharing has to be asked for.
 //
-//   --share               bind all interfaces (phones and tablets can print)
+// The switch lives in the web interface, under Network, and is persisted;
+// this reads it at start-up. The flag and environment variable remain for
+// running the server by hand.
+//
+//   Network page          the normal way to change it
+//   --share               bind all interfaces
 //   MVB530_SHARE=1        the same, for a LaunchAgent
 //
 // An explicit -o listen-hostname=... on the command line always wins.
@@ -181,6 +186,7 @@ var arguments = CommandLine.arguments
 let shareRequested = arguments.contains("--share")
     || ["1", "true", "yes"].contains(
         (ProcessInfo.processInfo.environment["MVB530_SHARE"] ?? "").lowercased())
+    || isSharingEnabled()
 
 // --share is ours, not PAPPL's; it would reject an option it does not know.
 arguments.removeAll { $0 == "--share" }

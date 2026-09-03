@@ -143,6 +143,7 @@ private let presence = Presence()
 /// is what makes the queue show as offline when the printer is switched off.
 let statusUpdateCallback: pappl_pr_status_cb_t = { printer in
     describePrinter(printer)
+    registerSharingPage(papplPrinterGetSystem(printer))
     let offline = PAPPL_PREASON_OFFLINE.rawValue
     if presence.current() {
         papplPrinterSetReasons(printer, PAPPL_PREASON_NONE.rawValue, offline)

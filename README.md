@@ -95,22 +95,23 @@ With all interfaces bound, joining any network — a café, a hotel, a coworking
 space — advertises the printer there and hands anyone on it the ability to
 print, change the darkness and paper settings, or delete the queue.
 
-So exposure has to be asked for:
+So exposure has to be asked for. The switch is in the web interface, under
+**Sharing**:
 
-```bash
-mvb530-printer-app server --share      # bind all interfaces
-MVB530_SHARE=1                         # the same, for the LaunchAgent
+```
+http://localhost:8631/sharing
 ```
 
-For the installed service, add to
-`~/Library/LaunchAgents/org.hmvs.mvb530.plist`:
+Pick "Share with the network" or "This Mac only" and save. The setting is
+remembered, and the service restarts to apply it — which addresses are bound
+is fixed when PAPPL starts and there is no API to drop a listener later, so a
+restart is the only honest way to change it. launchd brings it straight back;
+it takes a few seconds.
 
-```xml
-<key>EnvironmentVariables</key>
-<dict><key>MVB530_SHARE</key><string>1</string></dict>
-```
+For running the server by hand there are also `--share` and `MVB530_SHARE=1`,
+and an explicit `-o listen-hostname=...` overrides everything.
 
-then `make restart`. Verify which way it is bound:
+Verify which way it is bound:
 
 ```bash
 lsof -nP -iTCP:8631 -sTCP:LISTEN
@@ -118,7 +119,7 @@ lsof -nP -iTCP:8631 -sTCP:LISTEN
 #   *:8631            shared
 ```
 
-An explicit `-o listen-hostname=...` always wins over both.
+
 
 ### CoreBluetooth has to start on the main queue, after PAPPL
 
