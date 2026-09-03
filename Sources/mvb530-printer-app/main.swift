@@ -25,11 +25,12 @@ let driverCallback: pappl_pr_driver_cb_t = {
     guard let driverData else { return false }
     _ = (name, deviceURI, deviceID)
 
-    // The web interface is otherwise all "Not set", which tells a user
-    // nothing about what they are looking at.
+    // Only the name is worth setting. Location, geo-location, organisation
+    // and contact are IPP deployment metadata for managed office fleets -
+    // which floor a printer is on, who administers it. Filling them with
+    // invented values for a printer on someone's desk is noise, not
+    // information, so they are left empty for the owner to use or ignore.
     if let system {
-        papplSystemSetOrganization(system, "mv-b530-macos-cups-driver")
-        papplSystemSetLocation(system, "Bluetooth LE, this Mac")
         papplSystemSetDNSSDName(system, "Anko Inkless A4")
         papplSystemSetFooterHTML(system, """
             Anko Inkless A4 thermal printer (MV-B530 and clones), driven over             Bluetooth LE at 200&nbsp;dpi. The printer must be switched on to             accept a job; jobs submitted while it is asleep wait for it.
@@ -120,11 +121,10 @@ let driverCallback: pappl_pr_driver_cb_t = {
     return true
 }
 
-/// Sets the per-printer metadata the web interface and IPP clients show.
+/// Sets the DNS-SD name clients show. Deliberately does not touch location,
+/// organisation or contact - see the note in the driver callback.
 func describePrinter(_ printer: OpaquePointer?) {
     guard let printer else { return }
-    papplPrinterSetLocation(printer, "Bluetooth LE")
-    papplPrinterSetOrganization(printer, "Anko / Kmart 43618996")
     papplPrinterSetDNSSDName(printer, "Anko Inkless A4")
 }
 
