@@ -152,8 +152,8 @@ make test      # builds PAPPL, then runs the test suite
 make install   # no sudo
 ```
 
-`make install` puts two binaries in `~/.local/libexec`, registers both as user
-LaunchAgents so they start at login, and creates the driverless queue. To pin a
+`make install` puts one binary in `~/.local/libexec`, registers it as a user
+LaunchAgent so it starts at login, and creates the driverless queue. To pin a
 particular printer rather than the first one found:
 
 ```bash
@@ -163,7 +163,7 @@ MVB530_PRINTER=MV-B530-38AC make install
 The first print raises a Bluetooth permission prompt. Approve it once.
 
 ```bash
-make status     # are both services up?
+make status     # is it up?
 make restart    # after installing a new build
 make uninstall  # remove everything, including the queue
 ```
