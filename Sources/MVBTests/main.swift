@@ -514,8 +514,8 @@ func testPagePipeline() {
 func testHairlineThreshold() {
     group("hairline threshold")
 
-    // A hairline rule in a PDF renders grey, not black: this is the level
-    // measured on a real form. At the old 128 it vanished entirely.
+    // Forms draw their rules in grey rather than black - 143 on the one this
+    // was measured from, with antialiasing off. At the old 128 they vanished.
     let hairline: [UInt8] = [255, 255, 143, 143, 255, 255]
     let erased = Bilevel.convert(luma: hairline, width: 6, height: 1,
                                  dither: .none, threshold: 128)

@@ -208,14 +208,22 @@ printed at under half the heat it wants. Content is taken from IPP's
 `print-content-optimize`: anything not explicitly a photograph is treated as
 text, since that is what this printer is nearly always asked for.
 
-**Hairlines are not black.** A half-point rule in a PDF covers part of a pixel
-at 200 dpi, so CUPS renders it grey - and a bilevel threshold at the obvious
-128 erases it. On one real form, 344 of its 879 horizontal rules never reached
-128: the darkest pixel in them was 143, 200, even 226. Text still looked right,
-so the page came out with its borders missing. Text and line art are therefore
-burned at 176, which keeps all but five of those rules for about one per cent
-more of the page burned; past roughly 208 the coverage climbs steeply as light
-greys and glyph haloes fill in.
+**Form rules are drawn in grey, not black.** A bilevel threshold at the
+obvious 128 deletes them: on one real form, 344 of its 879 horizontal rules
+never reached it, and the page printed with its borders missing while the text
+between them came out perfectly. This is not antialiasing — rendered with
+antialiasing off, those rules are still grey, every one of them at exactly 143.
+The document draws its borders that way, as most modern forms do.
+
+So the threshold has to sit above the grey a designer would call a line, and
+below the antialiased edges those lines leave behind, which measure 196 and
+lighter. Text and line art are burned at 176, in the middle of that band: it
+takes page one of that form from 535 rules printed to 874, and page two from
+847 to 1064, for about one per cent more of the page burned. Higher is not
+free — past roughly 208 the coverage climbs steeply as the haloes around
+glyphs fill in, spending head energy and making the page look heavier than it
+was drawn. Photographs are unaffected: they go through error diffusion, where
+the same level would simply darken the picture.
 
 **The printer has its own flow control.** It sends unprompted notifications
 while a job streams — `51 78 AE 01 01 00 10 70 ff` when its line buffer is

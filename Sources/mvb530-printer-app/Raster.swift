@@ -13,14 +13,19 @@ let renderWidth = 1600
 
 /// How dark a grey has to be before the head burns it, for text and line art.
 ///
-/// Not the obvious 128. A hairline border in a PDF is not black: at 200 dpi a
-/// half-point rule covers only part of a pixel, and CUPS renders it grey.
-/// Measured on a real form, 344 of its 879 horizontal rules never reached 128
-/// - the darkest pixel in them was 143, 200, even 226 - so every one of them
-/// was erased. At 176 all but five survive, for about one per cent more of the
-/// page burned. Past roughly 208 that coverage climbs steeply as light greys
-/// and the haloes around glyphs fill in, which costs head energy and makes the
-/// page look heavy, so this sits below it.
+/// Not the obvious 128, and not because of antialiasing: rendered with
+/// antialiasing turned off, the rules on a real form are still grey, all of
+/// them at exactly 143. The document draws its borders in grey rather than
+/// black, as most modern forms do. A threshold at 128 says anything lighter
+/// than half black does not exist, so all 344 of that page's grey rules were
+/// deleted while the text between them printed perfectly.
+///
+/// The band that prints them is anything above 143 and below the antialiased
+/// edges those same lines leave behind, which measured 196 and lighter. 176
+/// sits in the middle of it, and costs about one per cent more of the page
+/// burned. Higher is not free: past roughly 208 the coverage climbs steeply as
+/// the haloes around glyphs fill in, which spends head energy and makes the
+/// page look heavier than it was drawn.
 let lineArtThreshold = 176
 
 /// Photographs go through error diffusion instead, where the same level would
