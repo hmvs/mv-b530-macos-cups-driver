@@ -148,12 +148,14 @@ private let sharingPage: pappl_resource_cb_t = { client, data in
         """)
     papplClientHTMLFooter(client)
 
-    // Shut down after the response has gone out; launchd restarts us, and
-    // start-up reads the new preference to decide what to bind.
+    // Shut down after the response has gone out; start-up then reads the new
+    // preference to decide what to bind. launchd brings the service back when
+    // it is installed as an agent; the .app has to ask for its own return.
     if restarting, let system {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             mvb_log(system, PAPPL_LOGLEVEL_INFO,
                     "restarting to apply the network setting")
+            relaunchBundle(port: defaultIPPPort)
             papplSystemShutdown(system)
         }
     }

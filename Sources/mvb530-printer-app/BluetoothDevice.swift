@@ -143,7 +143,9 @@ private let presence = Presence()
 /// is what makes the queue show as offline when the printer is switched off.
 let statusUpdateCallback: pappl_pr_status_cb_t = { printer in
     describePrinter(printer)
-    registerSharingPage(papplPrinterGetSystem(printer))
+    let system = papplPrinterGetSystem(printer)
+    registerSharingPage(system)
+    registerAboutPage(system)
     let offline = PAPPL_PREASON_OFFLINE.rawValue
     if presence.current() {
         papplPrinterSetReasons(printer, PAPPL_PREASON_NONE.rawValue, offline)
@@ -174,13 +176,33 @@ private func bufferOf(_ device: OpaquePointer?) -> DeviceBuffer? {
 }
 
 private let listCallback: pappl_devlist_cb_t = { callback, data, _, _ in
+    // PAPPL lists devices while the system is being created, which is before
+    // CoreBluetooth exists - the radio can only be started once papplMainloop
+    // is running. A scan here would come back empty and the printer PAPPL
+    // auto-adds on first run would never be created. What is reported instead
+    // is the host-less URI, which is what a queue wants anyway: it binds to
+    // whichever MV-B530 answers when a job runs, not to one unit.
+    if transport() == nil {
+        let stop = printerName.withCString { infoPtr in
+            "bluetooth:///".withCString { uriPtr in
+                "MFG:KM;MDL:P800;CMD:MVB530;".withCString { idPtr in
+                    callback?(infoPtr, uriPtr, idPtr, data) ?? false
+                }
+            }
+        }
+        return stop
+    }
+
     for found in scanForPrinters(duration: 6) {
         let uri = "bluetooth://\(found.name)/"
         let id = "MFG:KM;MDL:P800;CMD:MVB530;SN:\(found.name);"
-        let stop = uri.withCString { uriPtr in
-            found.name.withCString { namePtr in
+        // pappl_device_cb_t takes (device_info, device_uri, device_id).
+        // device_info becomes the printer's name when PAPPL auto-adds it, so
+        // it is the Bluetooth name of the unit.
+        let stop = found.name.withCString { infoPtr in
+            uri.withCString { uriPtr in
                 id.withCString { idPtr in
-                    callback?(uriPtr, idPtr, namePtr, data) ?? false
+                    callback?(infoPtr, uriPtr, idPtr, data) ?? false
                 }
             }
         }
@@ -262,6 +284,14 @@ private let idCallback: pappl_devid_cb_t = { device, buffer, size in
     "MFG:KM;MDL:P800;CMD:MVB530;".withCString { _ = strlcpy(buffer, $0, size) }
     return buffer
 }
+
+/// Names the driver for a device PAPPL has just discovered. Only MV-B530
+/// units are ever listed by the scheme above, so there is one answer.
+let autoAddCallback: pappl_pr_autoadd_cb_t = { _, _, _, _ in driverNameC }
+
+/// Owned for the process lifetime: PAPPL keeps this pointer rather than
+/// copying the string.
+private let driverNameC = UnsafePointer(strdup(driverName))
 
 func registerBluetoothScheme() {
     papplDeviceAddScheme("bluetooth", PAPPL_DEVTYPE_CUSTOM_LOCAL.rawValue,

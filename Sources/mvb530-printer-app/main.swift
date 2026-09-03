@@ -14,6 +14,7 @@
 import CPAPPL
 import Foundation
 import MVBTransport
+import ServiceManagement
 
 let driverName = "mvb530"
 let driverDescription = "Anko Inkless A4 (MV-B530)"
@@ -153,16 +154,114 @@ var drivers = [
     )
 ]
 
-if let waitEnv = ProcessInfo.processInfo.environment["MVB530_WAIT"],
-   let seconds = Double(waitEnv) {
+// A double-clicked app inherits no environment worth the name, so these can
+// also be set in the config file, as mvb530-wait and mvb530-printer.
+if let waitValue = ProcessInfo.processInfo.environment["MVB530_WAIT"]
+    ?? configuredValue("mvb530-wait"), let seconds = Double(waitValue) {
     printerWaitSeconds = seconds
 }
-if let pinned = ProcessInfo.processInfo.environment["MVB530_PRINTER"],
-   !pinned.isEmpty {
+if let pinned = ProcessInfo.processInfo.environment["MVB530_PRINTER"]
+    ?? configuredValue("mvb530-printer"), !pinned.isEmpty {
     pinnedPrinterName = pinned
 }
 
 registerBluetoothScheme()
+
+/// Port the bundled app listens on.
+///
+/// A double-clicked app has no command line and no environment to speak of,
+/// so the port is read back from the config file the app itself writes. That
+/// makes the file the place to change it - and the queue is repointed to
+/// match on the next start, so the two cannot drift.
+let defaultIPPPort = configuredValue("server-port").flatMap(Int.init).map { max($0, 1) }
+    ?? Int(ProcessInfo.processInfo.environment["MVB530_PORT"] ?? "")
+    ?? 8631
+
+/// The config file the bundle reads and writes.
+///
+/// PAPPL looks for it by argv[0]'s base name, and reads any name=value lines
+/// as if they had been given on the command line.
+func configurationURL() -> URL? {
+    guard let support = FileManager.default.urls(for: .applicationSupportDirectory,
+                                                 in: .userDomainMask).first
+    else { return nil }
+    let baseName = (CommandLine.arguments[0] as NSString).lastPathComponent
+    return support.appendingPathComponent("\(baseName).conf")
+}
+
+/// The lines currently in that file, comments and blanks dropped.
+func configurationLines() -> [String] {
+    guard let url = configurationURL(),
+          let text = try? String(contentsOf: url, encoding: .utf8)
+    else { return [] }
+    return text.split(separator: "\n").map(String.init).filter {
+        !$0.hasPrefix("#") && !$0.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+}
+
+/// The value recorded for a setting, if there is one.
+func configuredValue(_ key: String) -> String? {
+    configurationLines()
+        .first { $0.hasPrefix("\(key)=") }
+        .map { String($0.dropFirst(key.count + 1)) }
+}
+
+/// Ask macOS to start the app at login.
+///
+/// SMAppService puts it in System Settings > General > Login Items, where it
+/// can be seen and switched off, rather than a LaunchAgent plist the user
+/// never knows exists. Failing is not fatal: the app still runs now, it just
+/// will not come back after a reboot.
+func registerAsLoginItem() {
+    guard #available(macOS 13.0, *) else { return }
+    let service = SMAppService.mainApp
+    switch service.status {
+    case .enabled:
+        return
+    case .requiresApproval:
+        deviceLog("login item needs approval in System Settings > Login Items")
+        return
+    default:
+        break
+    }
+    do {
+        try service.register()
+        deviceLog("registered to start at login")
+    } catch {
+        deviceLog("could not register as a login item: \(error.localizedDescription)")
+    }
+}
+
+/// Writes the settings a bundled launch cannot pass on the command line.
+///
+/// The file is named after argv[0]'s base name because that is how PAPPL
+/// looks for it, and it is rewritten in full every start: turning sharing off
+/// has to remove the listen-hostname line, not merely stop adding it.
+func writeBundleConfiguration(port: Int, shared: Bool) {
+    guard let url = configurationURL() else { return }
+
+    // Anything the owner put here is kept; only the lines this decides are
+    // replaced, so turning sharing off removes listen-hostname rather than
+    // leaving a stale one behind.
+    let managed = ["server-port=", "server-options=", "listen-hostname="]
+    var lines = configurationLines().filter { line in
+        !managed.contains { line.hasPrefix($0) }
+    }
+
+    lines.append("server-port=\(port)")
+    lines.append("server-options=no-tls,no-multi-queue")
+    if !shared {
+        lines.append("listen-hostname=localhost")
+    }
+
+    let header = """
+        # Read by Anko Inkless A4 at start-up. Settings you add are kept;
+        # server-port, server-options and listen-hostname are rewritten.
+        # Recognised here as well: mvb530-wait, mvb530-printer.
+        """
+    try? ([header] + lines).joined(separator: "\n").appending("\n")
+        .write(to: url, atomically: true, encoding: .utf8)
+}
 
 // MARK: - Network exposure
 //
@@ -191,9 +290,22 @@ let shareRequested = arguments.contains("--share")
 // --share is ours, not PAPPL's; it would reject an option it does not know.
 arguments.removeAll { $0 == "--share" }
 
-let hostnameAlreadySet = arguments.contains { $0.hasPrefix("listen-hostname=") }
-if !shareRequested && !hostnameAlreadySet {
-    arguments += ["-o", "listen-hostname=localhost"]
+// Inside a .app, PAPPL throws our command line away. papplMainloop replaces
+// argc/argv with its own "server" invocation whenever argv[0] contains
+// ".app/Contents/MacOS/", so options passed here never reach it. What it does
+// still read is a config file named after argv[0], which is where the bundle's
+// settings have to go. Options given on the command line keep priority:
+// PAPPL's load_options only fills in what is unset.
+let launchedFromBundle = arguments[0].contains(".app/Contents/MacOS/")
+
+if launchedFromBundle {
+    registerAsLoginItem()
+    writeBundleConfiguration(port: defaultIPPPort, shared: shareRequested)
+} else {
+    let hostnameAlreadySet = arguments.contains { $0.hasPrefix("listen-hostname=") }
+    if !shareRequested && !hostnameAlreadySet {
+        arguments += ["-o", "listen-hostname=localhost"]
+    }
 }
 
 var argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) }
@@ -205,6 +317,13 @@ argv.append(nil)
 // state callback is ever delivered. papplMainloop blocks, so this is queued
 // now and runs once the run loop is live.
 DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: startTransport)
+
+// A bundle has no install step, so it sets itself up once the server answers.
+if launchedFromBundle {
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) {
+        performFirstRunSetup(port: defaultIPPPort)
+    }
+}
 
 // PAPPL must own the main thread on macOS: it creates an NSStatusItem, and
 // AppKit throws "NSWindow should only be instantiated on the main thread".
@@ -228,7 +347,7 @@ exit(papplMainloop(
     """,                    // footer HTML
     Int32(drivers.count),
     &drivers,
-    nil,                    // autoadd callback
+    autoAddCallback,
     driverCallback,
     nil,                    // extra subcommand name
     nil,                    // extra subcommand callback

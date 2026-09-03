@@ -64,9 +64,9 @@ that protocol and exposes it as a standards-compliant IPP printer.
                                      printer
 ```
 
-One process, running as a user LaunchAgent. Nothing is installed as root, and
-no PPD is authored here — `lpadmin -m everywhere` builds the queue from the IPP
-attributes the printer application advertises.
+One process, shipped as `Anko Inkless A4.app` and started at login. Nothing is
+installed as root, and no PPD is authored here — `lpadmin -m everywhere` builds
+the queue from the IPP attributes the printer application advertises.
 
 ### Discovery
 
@@ -105,8 +105,8 @@ http://localhost:8631/sharing
 Pick "Share with the network" or "This Mac only" and save. The setting is
 remembered, and the service restarts to apply it — which addresses are bound
 is fixed when PAPPL starts and there is no API to drop a listener later, so a
-restart is the only honest way to change it. launchd brings it straight back;
-it takes a few seconds.
+restart is the only honest way to change it. The app waits for the port to be
+released and then starts itself again; it takes a few seconds.
 
 For running the server by hand there are also `--share` and `MVB530_SHARE=1`,
 and an explicit `-o listen-hostname=...` overrides everything.
@@ -140,13 +140,34 @@ it up:
 DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: startTransport)
 ```
 
-### Why it is not an .app
+### The app bundle, and the argv PAPPL throws away
 
-The binary embeds its own `Info.plist` in a `__TEXT,__info_plist` section, so
-it declares `NSBluetoothAlwaysUsageDescription` without a bundle. It must be
-started **by launchd**: a shell-spawned process inherits the terminal's TCC
-identity and is killed on the first CoreBluetooth call, whereas under launchd
-it is its own responsible process.
+It has to be an app, or launchd: a shell-spawned process inherits the
+terminal's TCC identity and is killed on its first CoreBluetooth call. Started
+from Finder or by launchd it is its own responsible process, and the Bluetooth
+grant sticks to the bundle's signature.
+
+PAPPL has its own idea of what a bundle wants. `papplMainloop` replaces argc
+and argv outright when `argv[0]` contains `.app/Contents/MacOS/`:
+
+```c
+if (... strstr(argv[0], ".app/Contents/MacOS/") != NULL) {
+  server_argv[] = { argv[0], "server", "-o", "log-file=syslog", ... };
+  argc = 6; argv = server_argv;
+}
+```
+
+So no option passed here survives, and the server would come up on PAPPL's own
+default port, bound to every interface. What it does still read is
+`~/Library/Application Support/<argv[0] base name>.conf`, so that is where the
+port and the listen address go — written at start-up, before the mainloop.
+Command-line options still win over it: PAPPL's `load_options` only fills in
+what is unset.
+
+The same override means the bundle cannot run its own subcommands — `add`,
+`devices`, `jobs` would each start a second server. So the printer is not
+created by shelling out, as `make install` did; PAPPL's first-run auto-add
+creates it, and the CUPS queue is created in-process with `lpadmin`.
 
 ### Status reporting
 
@@ -187,37 +208,65 @@ Needs macOS 13+, the Command Line Tools, and OpenSSL (`brew install openssl@3`)
 git clone --recursive https://github.com/hmvs/mv-b530-macos-cups-driver.git
 cd mv-b530-macos-cups-driver
 make test      # builds PAPPL, then runs the test suite
-make install   # no sudo
+make app       # builds "Anko Inkless A4.app"
 ```
 
-`make install` puts one binary in `~/.local/libexec`, registers it as a user
-LaunchAgent so it starts at login, and creates the driverless queue. To pin a
-particular printer rather than the first one found:
+Drag `.build/Anko Inkless A4.app` into **Applications** and open it. Nothing
+runs as root and there is no installer. On first launch it
+
+- registers in **System Settings → General → Login Items**, so it comes back
+  after a restart,
+- creates the printer on its own IPP service, and
+- creates the CUPS queue **Anko_Inkless_A4** and makes it the default.
+
+It has no window: it lives in the menu bar, and the menu opens its web
+interface, which carries an **About** page explaining what it is. Being a
+menu-bar app it does not appear in the Dock or ⌘-Tab, but it is in Finder,
+Launchpad and Spotlight under **Anko Inkless A4**.
+
+The first print raises a Bluetooth permission prompt. Approve it once.
+
+### Settings
+
+`~/Library/Application Support/Anko Inkless A4.conf`:
+
+| Setting | Meaning |
+|---|---|
+| `server-port=8631` | the IPP and web port |
+| `mvb530-wait=180` | seconds to wait for a sleeping printer before failing a job |
+| `mvb530-printer=MV-B530-38AC` | use one particular unit rather than the first found |
+
+Lines you add are kept. `server-options` and `listen-hostname` are rewritten at
+every start — the latter from the Sharing setting. Change the port and the CUPS
+queue is repointed to match on the next start, so the two cannot drift.
+
+Sharing is a page in the web interface, not a file setting: see
+[Sharing](#sharing) above.
+
+### Without the app
+
+`make install` runs the same binary as a user LaunchAgent instead: one binary
+in `~/.local/libexec`, a plist in `~/Library/LaunchAgents`, and the same
+driverless queue. Use it for a headless machine, or when you want the
+command-line subcommands — a bundle cannot run them, because PAPPL rewrites
+its arguments into a plain `server` invocation.
 
 ```bash
+make install                     # no sudo
+make install IPP_PORT=9631       # if something else wants 8631
 MVB530_PRINTER=MV-B530-38AC make install
 ```
 
-The service listens on port 8631. Nothing standard claims it, but if you want
-it for something else:
-
-```bash
-make install IPP_PORT=9631
-```
-
-That writes the port into both the LaunchAgent and the queue's device URI, so
-the two cannot drift. Installing onto a port something else already holds is
-refused rather than leaving a queue pointing at a dead socket.
-
-The first print raises a Bluetooth permission prompt. Approve it once.
+Only one of the two can hold the port, so `make app` removes the LaunchAgent
+if it finds one.
 
 ```bash
 make status     # is it up?
 make restart    # after installing a new build
-make uninstall  # remove everything, including the queue
+make uninstall  # remove the agent and the queue
 ```
 
-Logs are at `~/Library/Logs/mvb530.log`, and in the unified log:
+Logs are at `~/Library/Logs/mvb530.log` for the agent, and for either:
 
 ```bash
 log stream --predicate 'subsystem == "org.hmvs.mvb530"' --info
@@ -241,8 +290,7 @@ You can hit ⌘P first and switch the printer on afterwards. The job waits.
 - CUPS retries on its own schedule: `JobRetryInterval` (default **30 s**) and
   `JobRetryLimit` (default **5**).
 
-To wait longer, set `MVB530_WAIT` in
-`~/Library/LaunchAgents/org.hmvs.mvb530.plist` — `900` gives roughly 77
+To wait longer, set `mvb530-wait=900` in the config file above — roughly 77
 minutes of tolerance.
 
 ### Does macOS show it as offline?
@@ -261,18 +309,15 @@ $ ipptool -tv ipp://localhost:8631/ipp/print/anko get-printer-attributes.test \
 Presence is re-checked at most every 45 seconds, so switching the printer on
 takes up to that long to show. It is immediate after any job.
 
-If you want a live answer at any moment, ask the agent instead:
-
-```bash
-curl localhost:9101/scan
-```
-
 ### Diagnostics
+
+The subcommands need the standalone binary: run from inside the .app they
+would start a second server, for the reason given above.
 
 ```bash
 make status
-~/.local/libexec/mvb530-printer-app devices   # Bluetooth scan
-~/.local/libexec/mvb530-printer-app jobs
+.build/release/mvb530-printer-app devices     # Bluetooth scan
+.build/release/mvb530-printer-app jobs
 ipptool -t ipp://localhost:8631/ipp/print/anko get-printer-attributes.test
 dns-sd -B '_ipp._tcp,_universal' local        # what AirPrint would see
 open http://localhost:8631/                   # PAPPL web interface

@@ -4,7 +4,8 @@
 #   make build            build only
 #   make test             run the test suite
 #   make universal        universal (arm64 + x86_64) binaries for release
-#   make install          install, no sudo required
+#   make app              build "Anko Inkless A4.app" to drag into Applications
+#   make install          install as a LaunchAgent instead, no sudo required
 #   make uninstall        remove everything this installed
 #   make status           are the services up?
 #   make restart          restart them after installing a new build
@@ -23,7 +24,8 @@ IPP_PORT    ?= 8631
 AGENTS_DIR  := $(HOME)/Library/LaunchAgents
 LOGDIR      := $(HOME)/Library/Logs
 APP_LABEL   := org.hmvs.mvb530
-RELEASE     := .build/release
+BUILD       := .build
+RELEASE     := $(BUILD)/release
 UNIVERSAL   := .build/universal
 # Which build to install from. Override for a universal release build:
 #   make install BINDIR=.build/universal
@@ -68,6 +70,23 @@ build: $(PAPPL_LIB)
 
 test: build
 	./$(RELEASE)/MVBTests tests/fixtures/line_eight.txt
+
+# The normal way to install: a bundle the user drags to Applications. It sets
+# itself up on first launch - registers as a login item, creates the printer
+# and the CUPS queue - so there is nothing else to run.
+app: build
+	@# Only one of the two can hold the port, and the agent wins the race
+	@# on login, leaving the app dead with no explanation.
+	@if [ -f $(AGENTS_DIR)/$(APP_LABEL).plist ] \
+	   || launchctl print $(GUI)/$(APP_LABEL) >/dev/null 2>&1; then \
+		echo "==> removing the LaunchAgent: the app replaces it"; \
+		launchctl bootout $(GUI)/$(APP_LABEL) 2>/dev/null || true; \
+		rm -f $(AGENTS_DIR)/$(APP_LABEL).plist; \
+	fi
+	@BINDIR=$(RELEASE) ./scripts/make-app.sh
+	@echo
+	@echo "Drag \"$(BUILD)/Anko Inkless A4.app\" to /Applications, then open it."
+	@echo "It starts at login from then on; the first print asks for Bluetooth."
 
 install: build
 	@if [ "$$(id -u)" -eq 0 ]; then \
