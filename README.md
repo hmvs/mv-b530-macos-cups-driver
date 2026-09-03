@@ -1,8 +1,8 @@
 # MV-B530 macOS CUPS driver — Kmart / Anko "Inkless A4 Printer"
 
 An **IPP Everywhere / AirPrint** printer application for the **Kmart Anko
-Inkless A4 Printer**, so you can press ⌘P from any macOS app — or from a phone
-on the same Wi-Fi — instead of being limited to the vendor's phone app.
+Inkless A4 Printer**, so you can press ⌘P from any macOS app — and optionally
+from a phone on the same Wi-Fi — instead of being limited to the vendor's app.
 
 Swift. Installs without root, and without a PPD or a CUPS filter, so nothing
 here depends on the parts CUPS 3.x removes.
@@ -77,11 +77,48 @@ URF=V1.5,W8,PQ3-4-5,FN3,IS0-1,MT1-5,OB10,RS200
 pdl=image/pwg-raster,image/urf
 ```
 
-Because the service binds all interfaces, a phone or tablet on the same
-network can print to it, with the Mac relaying over Bluetooth — a
-Bluetooth-only printer becomes a shared network printer. The flip side is that
-anyone on your LAN can print to it and reach PAPPL's web interface. If that
-matters, bind it to loopback with `-o server-hostname=localhost`.
+By default the service is **private**: it binds loopback only, so the records
+above are visible to this Mac and nothing else.
+
+### Sharing
+
+Sharing turns a Bluetooth-only printer into a network printer any phone or
+tablet can use, with the Mac relaying over BLE. It is off by default, because
+**PAPPL's web interface requires no authentication** — measured, not assumed:
+
+```
+$ curl -o /dev/null -w '%{http_code}' http://<mac-ip>:8631/config
+200          # editable admin page, no credentials, no WWW-Authenticate header
+```
+
+With all interfaces bound, joining any network — a café, a hotel, a coworking
+space — advertises the printer there and hands anyone on it the ability to
+print, change the darkness and paper settings, or delete the queue.
+
+So exposure has to be asked for:
+
+```bash
+mvb530-printer-app server --share      # bind all interfaces
+MVB530_SHARE=1                         # the same, for the LaunchAgent
+```
+
+For the installed service, add to
+`~/Library/LaunchAgents/org.hmvs.mvb530.plist`:
+
+```xml
+<key>EnvironmentVariables</key>
+<dict><key>MVB530_SHARE</key><string>1</string></dict>
+```
+
+then `make restart`. Verify which way it is bound:
+
+```bash
+lsof -nP -iTCP:8631 -sTCP:LISTEN
+#   127.0.0.1:8631    private
+#   *:8631            shared
+```
+
+An explicit `-o listen-hostname=...` always wins over both.
 
 ### CoreBluetooth has to start on the main queue, after PAPPL
 

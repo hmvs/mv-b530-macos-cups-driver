@@ -17,6 +17,15 @@
         <string>-o</string>
         <string>server-port=8631</string>
     </array>
+    <!-- The printer is private by default: bound to loopback, so joining a
+         Wi-Fi does not advertise it to that network. PAPPL's admin pages take
+         no authentication, so exposure has to be deliberate.
+
+         To share it with phones and tablets, set MVB530_SHARE to 1:
+           <key>EnvironmentVariables</key>
+           <dict><key>MVB530_SHARE</key><string>1</string></dict>
+         then: make restart -->
+
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

@@ -164,6 +164,35 @@ if let pinned = ProcessInfo.processInfo.environment["MVB530_PRINTER"],
 
 registerBluetoothScheme()
 
+// MARK: - Network exposure
+//
+// PAPPL binds every interface by default, which means joining any Wi-Fi
+// advertises this printer to that network - and its admin pages take no
+// authentication, so anyone there could print to it or change its settings.
+// Private is therefore the default, and sharing has to be asked for.
+//
+//   --share               bind all interfaces (phones and tablets can print)
+//   MVB530_SHARE=1        the same, for a LaunchAgent
+//
+// An explicit -o listen-hostname=... on the command line always wins.
+
+var arguments = CommandLine.arguments
+
+let shareRequested = arguments.contains("--share")
+    || ["1", "true", "yes"].contains(
+        (ProcessInfo.processInfo.environment["MVB530_SHARE"] ?? "").lowercased())
+
+// --share is ours, not PAPPL's; it would reject an option it does not know.
+arguments.removeAll { $0 == "--share" }
+
+let hostnameAlreadySet = arguments.contains { $0.hasPrefix("listen-hostname=") }
+if !shareRequested && !hostnameAlreadySet {
+    arguments += ["-o", "listen-hostname=localhost"]
+}
+
+var argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) }
+argv.append(nil)
+
 // CoreBluetooth has to be created on the main queue *after* papplMainloop
 // brings up NSApplication, whose run loop services that queue. Created before
 // it, or on a worker thread, the central manager never leaves .unknown and no
@@ -180,8 +209,8 @@ DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: startTransport)
 // The agent owns the radio; nothing to warm up here.
 
 exit(papplMainloop(
-    CommandLine.argc,
-    CommandLine.unsafeArgv,
+    Int32(arguments.count),
+    &argv,
     "1.0",
     """
     <p>Anko Inkless A4 thermal printer (MV-B530 and clones), driven over \
