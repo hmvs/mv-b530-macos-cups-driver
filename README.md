@@ -61,22 +61,31 @@ There are two, and you want the one matching your Mac — click the  menu →
 **2. Unzip it** — double-click the download — and drag **Anko Inkless A4** into
 your **Applications** folder.
 
-**3. Open it.** The first time, macOS says it *"cannot verify the developer"*
-and refuses. This is expected: verifying costs an annual fee to Apple, and this
-is a free project. To open it anyway:
+**3. Open it, and expect to be refused.** Double-click the app. macOS puts up a
+warning — *"Apple could not verify Anko Inkless A4 is free of malware"* — with
+no way past it. Click **Done**. This is normal and not a sign anything is
+wrong: Apple charges developers an annual fee to be vouched for, and this is a
+free project that has not paid it.
 
-> Go to  → **System Settings** → **Privacy & Security**, scroll down to
-> **Security**, and click **Open Anyway** next to Anko Inkless A4. Confirm with
-> your password or Touch ID.
+**4. Now allow it.** The button that lets you through only appears *after* that
+refusal, which is why the order matters:
 
-**4. Nothing seems to happen** — that is right. It has no window: look for its
+>  → **System Settings** → **Privacy & Security**, then scroll down to
+> **Security**. There is a line reading *"Anko Inkless A4 was blocked to protect
+> your Mac"*, with **Open Anyway** beside it. Click that, confirm with Touch ID
+> or your password, and click **Open** in the dialog that follows.
+>
+> No such line? Then the app has not been refused yet — go back and double-click
+> it first. You only have to do this once, ever.
+
+**5. Nothing seems to happen** — that is right. It has no window: look for its
 icon in the menu bar at the top right of the screen. It starts by itself
 whenever you log in from now on.
 
-**5. Turn the printer on** — hold the power key for three seconds until the
+**6. Turn the printer on** — hold the power key for three seconds until the
 green light flashes.
 
-**6. Print** from any app, choosing **Anko Inkless A4**. The first time, macOS
+**7. Print** from any app, choosing **Anko Inkless A4**. The first time, macOS
 asks whether the app may use Bluetooth. Say **Allow** — that is how it reaches
 the printer, and it will not work otherwise.
 
@@ -84,6 +93,7 @@ the printer, and it will not work otherwise.
 
 | | |
 |---|---|
+| macOS refuses to open the app | Expected — it is not signed by a paid Apple account. Try to open it once, then **System Settings** → **Privacy & Security** → **Security** → **Open Anyway**. The button is not there until you have tried. |
 | Nothing prints | Is the printer switched on, and not plugged into the charger? It cannot print while charging. |
 | It printed nothing, or a blank page | Paper goes in with the shiny side up. |
 | Lines or borders are missing, or the page looks too light | Click the menu bar icon, open the web page it offers, and try **Print quality** → *Shade everything*. |
