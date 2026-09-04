@@ -1,5 +1,20 @@
 // swift-tools-version:5.9
+import Foundation
 import PackageDescription
+
+/// Where OpenSSL lives, which differs by the kind of Mac: Homebrew puts it
+/// under /opt/homebrew on Apple silicon and /usr/local on Intel. Set
+/// OPENSSL_PREFIX to point somewhere else.
+let opensslPrefix: String = {
+    if let prefix = ProcessInfo.processInfo.environment["OPENSSL_PREFIX"],
+       !prefix.isEmpty {
+        return prefix
+    }
+    let candidates = ["/opt/homebrew/opt/openssl@3", "/usr/local/opt/openssl@3"]
+    return candidates.first {
+        FileManager.default.fileExists(atPath: $0 + "/lib")
+    } ?? candidates[0]
+}()
 
 let package = Package(
     name: "mvb530",
@@ -38,7 +53,7 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .unsafeFlags([
                     "-Lvendor/pappl/pappl", "-lpappl",
-                    "-L/opt/homebrew/opt/openssl@3/lib", "-lssl", "-lcrypto",
+                    "-L\(opensslPrefix)/lib", "-lssl", "-lcrypto",
                     "-lcups", "-lz", "-lpam",
                     // Declares NSBluetoothAlwaysUsageDescription without an
                     // .app bundle; without it macOS kills the process on the

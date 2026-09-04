@@ -16,7 +16,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/vendor/pappl"
-OPENSSL="${OPENSSL_PREFIX:-/opt/homebrew/opt/openssl@3}"
+# Homebrew is under /opt/homebrew on Apple silicon and /usr/local on Intel.
+OPENSSL="${OPENSSL_PREFIX:-$(brew --prefix openssl@3 2>/dev/null)}"
+OPENSSL="${OPENSSL:-/opt/homebrew/opt/openssl@3}"
 
 if [ ! -f "$SRC/configure" ] && [ ! -f "$SRC/configure.ac" ]; then
     echo "vendor/pappl is empty - run: git submodule update --init --recursive" >&2
