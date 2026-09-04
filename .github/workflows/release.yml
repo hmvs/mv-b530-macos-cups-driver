@@ -19,11 +19,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14      # Apple silicon
+          - runner: macos-14           # Apple silicon
             arch: arm64
-          - runner: macos-13      # Intel
+          - runner: macos-15-intel     # Intel
             arch: x86_64
     runs-on: ${{ matrix.runner }}
+    # A label GitHub has retired queues for ever rather than failing, which is
+    # how the Intel half of the first release sat waiting for a runner that no
+    # longer exists. Check the label against GitHub's current list before
+    # changing it.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
