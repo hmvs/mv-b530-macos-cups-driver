@@ -71,8 +71,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Both architectures build at once, so whichever arrives first
-          # creates the release and the other joins it.
-          # Both architectures build at once, so whichever arrives first
           # creates the release and the other joins it. The notes are what
           # someone who has never seen this project reads first, so they say
           # which file to take and what macOS is about to do.
