@@ -58,8 +58,15 @@ There are two, and you want the one matching your Mac — click the  menu →
 | Apple M1, M2, M3, M4… | `Anko-Inkless-A4-arm64.zip` |
 | Intel | `Anko-Inkless-A4-x86_64.zip` |
 
-**2. Unzip it** — double-click the download — and drag **Anko Inkless A4** into
-your **Applications** folder.
+**2. Unzip it** — double-click the download — then **drag Anko Inkless A4 into
+your Applications folder in Finder**. Do this before opening it, and drag it
+rather than copying it.
+
+> This is not tidiness. macOS runs a downloaded app from a hidden, randomly
+> named temporary copy — *App Translocation* — until it is moved out of the
+> Downloads folder in Finder. That copy has a different path every launch, so
+> the Bluetooth permission never sticks to it and the printer is never found.
+> The symptom is an app that appears to work and simply never prints.
 
 **3. Open it, and expect to be refused.** Double-click the app. macOS puts up a
 warning — *"Apple could not verify Anko Inkless A4 is free of malware"* — with
@@ -98,6 +105,7 @@ the printer, and it will not work otherwise.
 | It printed nothing, or a blank page | Paper goes in with the shiny side up. |
 | Lines or borders are missing, or the page looks too light | Click the menu bar icon, open the web page it offers, and try **Print quality** → *Shade everything*. |
 | It says "offline" but the printer is on | It rechecks every 45 seconds — wait a moment. |
+| It never finds the printer, and asks about Bluetooth again and again | The app is still in Downloads. Quit it, drag it into **Applications** in Finder, and open it from there. Until it is moved, macOS runs it from a temporary copy that cannot keep permissions. |
 | You said no to Bluetooth by mistake | **System Settings** → **Privacy & Security** → **Bluetooth**, and switch **Anko Inkless A4** on. |
 
 ## Build it yourself
